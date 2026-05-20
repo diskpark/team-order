@@ -37,7 +37,7 @@ const todayKey = () => new Date().toISOString().slice(0,10);
 const fmt = p => Number(p).toLocaleString()+"원";
 const uid = () => `${Date.now()}_${Math.random().toString(36).slice(2,7)}`;
 
-function makeMembers(names){ return names.map((name,i)=>({id:uid(),no:i+1,name})); }
+function makeMembers(names){ return names.map((n,i)=>({id:uid(),no:i+1,name:n})); }
 
 const DEFAULT_TEAMS = [
   {id:"t1",name:"1조",members:makeMembers(["장민","박용덕","성민규","오승록","최선우","고건문","박재형","유준희","이동진","양재원","김대영","김토담","박건영","김주완","지윤삼","이건우","이창","김혁호"])},
@@ -68,31 +68,28 @@ const DEFAULT_RESTAURANTS = [
 // ── 상태 ─────────────────────────────────────────────────────────
 let S = {
   screen:"loading",
+  myTeamDocId: localStorage.getItem("myTeamDocId")||null, // 저장된 조
   myTeam:null,
   teams:[],
   restaurants:[],
   allOrders:[],
   tab:"order",
-  menuBoard:null,
+  selectedRestaurantId:null, // 선택된 식당
+  menuSheet:null,            // {member} 열린 팀원
   liveBoard:false,
   settings:false,
   settingsTab:"teams",
   toast:null, toastTimer:null,
   selectedMenu:null,
   dataInitialized:false,
-  // 팀원 관리
+  // 설정 편집
   newMemberName:"", newMemberNo:"",
   editMemberId:null, editMemberName:"", editMemberNo:"",
-  // 팀 추가
-  newTeamName:"",
-  // 식당 관리
   newRestaurantName:"", newRestaurantEmoji:"🍽", newRestaurantCategory:"",
   editRestaurantId:null,
   editRestaurantName:"", editRestaurantEmoji:"", editRestaurantCategory:"",
-  // 메뉴 관리
   newMenuName:"", newMenuPrice:"",
   editMenuId:null, editMenuRestaurantId:null, editMenuName:"", editMenuPrice:"",
-  expandedTeamId:null,
   expandedRestaurantId:null,
 };
 
@@ -104,18 +101,26 @@ function initFirebase(){
       saveDefaultData();
     } else {
       S.teams = snap.docs.map(d=>({...d.data(),docId:d.id}));
-      S.teams.sort((a,b)=>{
-        const na=parseInt(a.name), nb=parseInt(b.name);
-        return isNaN(na)||isNaN(nb)?a.name.localeCompare(b.name,'ko'):na-nb;
-      });
-      // myTeam 동기화
-      if(S.myTeam) S.myTeam = S.teams.find(t=>t.docId===S.myTeam.docId)||S.myTeam;
-      if(S.screen==="loading") S.screen="teamSelect";
+      S.teams.sort((a,b)=>{const na=parseInt(a.name),nb=parseInt(b.name);return isNaN(na)||isNaN(nb)?a.name.localeCompare(b.name,'ko'):na-nb;});
+      // 저장된 조 복원
+      if(S.myTeamDocId && !S.myTeam){
+        const found = S.teams.find(t=>t.docId===S.myTeamDocId);
+        if(found){ S.myTeam=found; S.screen="main"; }
+        else { S.screen="teamSelect"; }
+      } else if(S.myTeam){
+        S.myTeam = S.teams.find(t=>t.docId===S.myTeam.docId)||S.myTeam;
+      } else if(S.screen==="loading"){
+        S.screen="teamSelect";
+      }
       render();
     }
   });
   onSnapshot(collection(db,"restaurants"), snap=>{
     S.restaurants = snap.docs.map(d=>({...d.data(),docId:d.id}));
+    // 첫 번째 식당 자동 선택
+    if(!S.selectedRestaurantId && S.restaurants.length>0){
+      S.selectedRestaurantId = S.restaurants[0].docId;
+    }
     render();
   });
   onSnapshot(collection(db,"orders"), snap=>{
@@ -131,7 +136,6 @@ async function saveDefaultData(){
   await batch.commit();
 }
 
-// ── 토스트 ────────────────────────────────────────────────────────
 function showToast(msg){
   if(S.toastTimer) clearTimeout(S.toastTimer);
   S.toast=msg;
@@ -146,21 +150,26 @@ function getMyOrder(memberName){
 function countByRestaurant(rName){
   return S.allOrders.filter(o=>o.restaurant===rName).length;
 }
+function getSelectedRestaurant(){
+  return S.restaurants.find(r=>r.docId===S.selectedRestaurantId);
+}
+
 async function submitOrder(menu){
-  const mb=S.menuBoard; if(!mb?.member) return;
+  const ms=S.menuSheet; if(!ms?.member) return;
+  const r=getSelectedRestaurant(); if(!r) return;
   const order={
-    team:S.myTeam.name, member:mb.member.name,
-    restaurant:mb.restaurant.name, restaurantEmoji:mb.restaurant.emoji,
+    team:S.myTeam.name, member:ms.member.name,
+    restaurant:r.name, restaurantEmoji:r.emoji,
     menu:menu.name, price:menu.price,
     at:new Date().toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit"}),
     date:todayKey()
   };
   try{
-    const existing=S.allOrders.find(o=>o.team===S.myTeam.name&&o.member===mb.member.name);
+    const existing=S.allOrders.find(o=>o.team===S.myTeam.name&&o.member===ms.member.name);
     if(existing?.docId) await deleteDoc(doc(db,"orders",existing.docId));
     await addDoc(collection(db,"orders"),order);
-    S.menuBoard=null; S.selectedMenu=null;
-    showToast(`✅ ${mb.member.name} · ${menu.name}`);
+    S.menuSheet=null; S.selectedMenu=null;
+    showToast(`✅ ${ms.member.name} · ${menu.name}`);
   }catch(e){ showToast("❌ 저장 실패"); }
 }
 
@@ -184,16 +193,14 @@ async function saveMemberEdit(){
   const t=S.myTeam; if(!t||!S.editMemberId) return;
   const name=S.editMemberName.trim(); if(!name) return;
   const no=parseInt(S.editMemberNo)||0;
-  const newMembers=(t.members||[]).map(m=>
-    m.id===S.editMemberId ? {...m, name, no:no||m.no} : m
-  );
+  const newMembers=(t.members||[]).map(m=>m.id===S.editMemberId?{...m,name,no:no||m.no}:m);
   newMembers.sort((a,b)=>a.no-b.no);
   await setDoc(doc(db,"teams",t.docId),{...t,members:newMembers});
   S.editMemberId=null; S.editMemberName=""; S.editMemberNo="";
   showToast("✅ 수정 완료");
 }
 
-// ── 식당 CRUD ─────────────────────────────────────────────────────
+// ── 식당/메뉴 CRUD ────────────────────────────────────────────────
 async function addRestaurant(){
   const name=S.newRestaurantName.trim(); if(!name) return;
   const id=`r_${uid()}`;
@@ -207,17 +214,10 @@ async function removeRestaurant(docId){
 }
 async function saveRestaurantEdit(r){
   const name=S.editRestaurantName.trim(); if(!name) return;
-  await setDoc(doc(db,"restaurants",r.docId),{
-    ...r,
-    name,
-    emoji:S.editRestaurantEmoji||r.emoji,
-    category:S.editRestaurantCategory||r.category
-  });
+  await setDoc(doc(db,"restaurants",r.docId),{...r,name,emoji:S.editRestaurantEmoji||r.emoji,category:S.editRestaurantCategory||r.category});
   S.editRestaurantId=null;
   showToast("✅ 수정 완료");
 }
-
-// ── 메뉴 CRUD ─────────────────────────────────────────────────────
 async function addMenu(r){
   const name=S.newMenuName.trim(); const price=parseInt(S.newMenuPrice);
   if(!name||isNaN(price)) return;
@@ -233,12 +233,9 @@ async function removeMenu(r,menuId){
 async function saveMenuEdit(r){
   const name=S.editMenuName.trim(); const price=parseInt(S.editMenuPrice);
   if(!name||isNaN(price)) return;
-  const newMenus=(r.menus||[]).map(m=>
-    m.id===S.editMenuId ? {...m,name,price} : m
-  );
+  const newMenus=(r.menus||[]).map(m=>m.id===S.editMenuId?{...m,name,price}:m);
   await setDoc(doc(db,"restaurants",r.docId),{...r,menus:newMenus});
-  S.editMenuId=null; S.editMenuRestaurantId=null;
-  S.editMenuName=""; S.editMenuPrice="";
+  S.editMenuId=null; S.editMenuRestaurantId=null; S.editMenuName=""; S.editMenuPrice="";
   showToast("✅ 수정 완료");
 }
 async function saveRestaurantImage(r,base64){
@@ -254,7 +251,7 @@ function render(){
   if(S.screen==="main"){
     app.innerHTML=renderMain();
     bindMain();
-    if(S.menuBoard) bindMenuBoard();
+    if(S.menuSheet) bindMenuSheet();
     if(S.liveBoard) bindLiveBoard();
     if(S.settings) bindSettings();
   }
@@ -262,14 +259,14 @@ function render(){
 
 function renderLoading(){
   return `<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px">
-    <div style="font-size:48px">🍽</div>
-    <div style="color:#6060a0;font-size:14px">연결 중...</div>
+    <div style="font-size:48px">🍽</div><div style="color:#6060a0;font-size:14px">연결 중...</div>
   </div>`;
 }
 
+// ── 조 선택 ──────────────────────────────────────────────────────
 function renderTeamSelect(){
   const btns=S.teams.map(t=>`
-    <button data-team="${t.docId}" style="background:rgba(108,99,255,0.12);border:1.5px solid rgba(108,99,255,0.28);border-radius:16px;padding:16px 6px;color:#fff;text-align:center;display:flex;flex-direction:column;align-items:center;gap:5px;transition:all 0.18s">
+    <button data-team="${t.docId}" style="background:rgba(108,99,255,0.12);border:1.5px solid rgba(108,99,255,0.28);border-radius:16px;padding:18px 6px;color:#fff;text-align:center;display:flex;flex-direction:column;align-items:center;gap:5px;transition:all 0.18s">
       <span style="font-size:20px">👥</span>
       <span style="font-size:14px;font-weight:800">${t.name}</span>
       <span style="font-size:10px;color:#7070a0">${(t.members||[]).length}명</span>
@@ -287,38 +284,66 @@ function bindTeamSelect(){
     btn.onmouseleave=()=>btn.style.background="rgba(108,99,255,0.12)";
     btn.onclick=()=>{
       const t=S.teams.find(t=>t.docId===btn.dataset.team);
-      S.myTeam=t; S.screen="main"; render();
+      S.myTeam=t; S.myTeamDocId=t.docId;
+      localStorage.setItem("myTeamDocId",t.docId); // ← 저장
+      S.screen="main"; render();
     };
   });
 }
 
+// ── 메인 화면 ─────────────────────────────────────────────────────
 function renderMain(){
   const myOrders=S.allOrders.filter(o=>o.team===S.myTeam.name);
+  const selR=getSelectedRestaurant();
+
+  // 식당 탭 (선택된 식당 박스 표시)
   const rTabs=S.restaurants.map(r=>{
+    const active=r.docId===S.selectedRestaurantId;
     const cnt=countByRestaurant(r.name);
-    return `<button data-rtab="${r.docId}" style="flex-shrink:0;background:none;border:none;border-bottom:2px solid transparent;padding:10px 13px;display:flex;flex-direction:column;align-items:center;gap:2px;color:#606080;position:relative;transition:all 0.15s">
-      <span style="font-size:22px">${r.emoji}</span>
+    return `<button data-rtab="${r.docId}" style="
+      flex-shrink:0;
+      background:${active?"rgba(108,99,255,0.25)":"rgba(255,255,255,0.04)"};
+      border:2px solid ${active?"rgba(108,99,255,0.8)":"rgba(255,255,255,0.08)"};
+      border-radius:14px;
+      padding:10px 14px;
+      display:flex;flex-direction:column;align-items:center;gap:3px;
+      color:${active?"#c4c0ff":"#606080"};
+      position:relative;transition:all 0.18s;
+      min-width:72px;
+    ">
+      <span style="font-size:24px">${r.emoji}</span>
       <span style="font-size:11px;font-weight:700;white-space:nowrap">${r.name}</span>
-      ${cnt>0?`<span style="position:absolute;top:5px;right:3px;background:#ff6b6b;border-radius:20px;font-size:9px;padding:1px 5px;color:#fff;font-weight:800">${cnt}</span>`:""}
+      ${cnt>0?`<span style="position:absolute;top:-6px;right:-6px;background:#ff6b6b;border-radius:20px;font-size:9px;padding:2px 6px;color:#fff;font-weight:800">${cnt}</span>`:""}
+      ${active?`<div style="position:absolute;bottom:-2px;left:50%;transform:translateX(-50%);width:6px;height:6px;border-radius:50%;background:#9d97ff"></div>`:""}
     </button>`;
   }).join("");
 
-  const members=(S.myTeam.members||[]).map(m=>{
+  // 선택된 식당 메뉴 미리보기 바
+  const menuPreview = selR ? `
+    <div style="padding:8px 15px;background:rgba(108,99,255,0.06);border-bottom:1px solid rgba(255,255,255,0.06);overflow-x:auto;display:flex;gap:7px;align-items:center">
+      <span style="font-size:11px;color:#5050a0;white-space:nowrap;font-weight:700">메뉴</span>
+      ${(selR.menus||[]).map(m=>`<span style="flex-shrink:0;font-size:11px;color:#9090b0;background:rgba(255,255,255,0.05);border-radius:20px;padding:3px 9px;white-space:nowrap">${m.name} <span style="color:#6c63ff;font-weight:700">${fmt(m.price)}</span></span>`).join("")}
+    </div>` : "";
+
+  // 팀원 그리드 (한 화면에 맞게)
+  const members=(S.myTeam.members||[]);
+  const memberGrid=members.map(m=>{
     const order=getMyOrder(m.name); const done=!!order;
-    return `<button data-member="${m.id}" style="background:${done?"rgba(60,200,120,0.07)":"rgba(255,255,255,0.05)"};border:1.5px solid ${done?"rgba(60,200,120,0.25)":"rgba(255,255,255,0.1)"};border-radius:13px;padding:12px 14px;display:flex;align-items:center;justify-content:space-between;transition:all 0.15s;text-align:left;width:100%">
-      <div style="display:flex;align-items:center;gap:10px">
-        <div style="width:35px;height:35px;border-radius:50%;background:${done?"rgba(60,200,120,0.2)":"rgba(108,99,255,0.15)"};display:flex;align-items:center;justify-content:center;font-size:${done?15:13}px;flex-shrink:0">${done?"✓":"👤"}</div>
-        <div>
-          <div style="font-size:14px;font-weight:700;color:${done?"#60c880":"#e0e0f0"}">${m.name}</div>
-          ${done?`<div style="font-size:11px;color:#50a870;margin-top:1px">${order.restaurantEmoji} ${order.restaurant} — ${order.menu}</div>`:""}
-        </div>
-      </div>
-      <div style="text-align:right;flex-shrink:0">
-        ${done?`<div style="font-size:12px;color:#60c880;font-weight:700">${fmt(order.price)}</div><div style="font-size:10px;color:#406050;margin-top:1px">변경</div>`:`<span style="font-size:12px;color:#404060">주문 →</span>`}
-      </div>
+    return `<button data-member="${m.id}" style="
+      background:${done?"rgba(60,200,120,0.12)":"rgba(255,255,255,0.05)"};
+      border:1.5px solid ${done?"rgba(60,200,120,0.4)":"rgba(255,255,255,0.09)"};
+      border-radius:12px;padding:10px 6px;
+      display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
+      transition:all 0.15s;width:100%;aspect-ratio:1;
+      position:relative;
+    ">
+      <div style="font-size:${done?16:14}px">${done?"✓":"👤"}</div>
+      <div style="font-size:11px;font-weight:700;color:${done?"#60c880":"#d0d0e8"};text-align:center;line-height:1.2;word-break:keep-all">${m.name}</div>
+      ${done?`<div style="font-size:9px;color:#50a870;text-align:center;line-height:1.2">${order.restaurantEmoji}</div>`:""}
     </button>`;
   }).join("");
 
+  // 현황 탭
   let summaryHTML="";
   if(S.tab==="summary"){
     if(myOrders.length===0){
@@ -327,26 +352,37 @@ function renderMain(){
       const groups={};
       myOrders.forEach(o=>{if(!groups[o.restaurant])groups[o.restaurant]={name:o.restaurant,emoji:o.restaurantEmoji,items:[]};groups[o.restaurant].items.push(o);});
       summaryHTML=Object.values(groups).map(g=>`
-        <div style="margin-bottom:18px">
-          <div style="font-size:13px;font-weight:700;color:#9d97ff;margin-bottom:7px">${g.emoji} ${g.name} <span style="font-size:11px;background:rgba(108,99,255,0.2);border-radius:20px;padding:2px 7px">${g.items.length}건</span></div>
-          ${g.items.map(o=>`<div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:11px;padding:10px 13px;display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
+        <div style="margin-bottom:16px">
+          <div style="font-size:13px;font-weight:700;color:#9d97ff;margin-bottom:6px">${g.emoji} ${g.name} <span style="font-size:10px;background:rgba(108,99,255,0.2);border-radius:20px;padding:2px 7px">${g.items.length}건</span></div>
+          ${g.items.map(o=>`<div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.07);border-radius:10px;padding:10px 12px;display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
             <div><div style="font-size:13px;font-weight:700;color:#e0e0f0">${o.member}</div><div style="font-size:11px;color:#6060a0;margin-top:1px">${o.menu}</div></div>
-            <div style="display:flex;align-items:center;gap:9px">
-              <span style="font-size:13px;color:#9d97ff;font-weight:700">${fmt(o.price)}</span>
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="font-size:12px;color:#9d97ff;font-weight:700">${fmt(o.price)}</span>
               <button data-delete="${o.docId}" style="background:none;border:none;color:#ff6060;font-size:16px;line-height:1;padding:0">×</button>
             </div>
           </div>`).join("")}
-          <div style="text-align:right;font-size:11px;color:#6060a0;margin-top:3px">소계: <strong style="color:#9d97ff">${fmt(g.items.reduce((s,o)=>s+o.price,0))}</strong></div>
+          <div style="text-align:right;font-size:11px;color:#6060a0;margin-top:2px">소계: <strong style="color:#9d97ff">${fmt(g.items.reduce((s,o)=>s+o.price,0))}</strong></div>
         </div>`).join("")
-        +`<div style="border-top:1px solid rgba(255,255,255,0.07);padding-top:12px;text-align:right;font-size:15px;font-weight:800;color:#fff">총 합계: <span style="color:#9d97ff">${fmt(myOrders.reduce((s,o)=>s+o.price,0))}</span></div>`;
+        +`<div style="border-top:1px solid rgba(255,255,255,0.07);padding-top:11px;text-align:right;font-size:15px;font-weight:800;color:#fff">총 합계: <span style="color:#9d97ff">${fmt(myOrders.reduce((s,o)=>s+o.price,0))}</span></div>`;
     }
   }
 
+  // 메뉴 시트
+  const menuSheetHTML=S.menuSheet?renderMenuSheet():"";
+  // 라이브
+  const liveBoardHTML=S.liveBoard?renderLiveBoard():"";
+  // 설정
+  const settingsHTML=S.settings?renderSettings():"";
+  // 토스트
+  const toastHTML=S.toast?`<div style="position:fixed;bottom:88px;left:50%;transform:translateX(-50%);background:rgba(20,20,50,0.97);backdrop-filter:blur(8px);border:1px solid rgba(108,99,255,0.4);border-radius:50px;padding:10px 20px;font-size:13px;font-weight:700;color:#fff;z-index:500;white-space:nowrap;animation:fadeUp 0.2s ease">${S.toast}</div>`:"";
+
   return `
-  <div style="min-height:100vh;background:#0d0d1a;display:flex;flex-direction:column">
-    <div style="background:rgba(255,255,255,0.03);border-bottom:1px solid rgba(255,255,255,0.07);padding:12px 15px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:50;backdrop-filter:blur(16px)">
+  <div style="height:100vh;background:#0d0d1a;display:flex;flex-direction:column;overflow:hidden">
+
+    <!-- 헤더 -->
+    <div style="background:rgba(255,255,255,0.03);border-bottom:1px solid rgba(255,255,255,0.07);padding:11px 14px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;backdrop-filter:blur(16px)">
       <div style="display:flex;align-items:center;gap:8px">
-        <span style="font-size:18px">🍽</span>
+        <span style="font-size:17px">🍽</span>
         <div>
           <div style="font-size:9px;color:#5050a0;letter-spacing:2px">TEAM MEAL</div>
           <div style="font-size:15px;font-weight:900;color:#fff;line-height:1.2">${S.myTeam.name} 식사 주문</div>
@@ -356,81 +392,91 @@ function renderMain(){
         <button id="live-btn" style="background:rgba(255,107,107,0.15);border:1px solid rgba(255,107,107,0.3);border-radius:20px;padding:4px 10px;font-size:11px;color:#ff9d9d;font-weight:700;display:flex;align-items:center;gap:4px">
           <span style="width:5px;height:5px;border-radius:50%;background:#ff6b6b;display:inline-block;animation:pulse 1.5s infinite"></span>LIVE
         </button>
-        <div style="background:rgba(108,99,255,0.15);border:1px solid rgba(108,99,255,0.3);border-radius:20px;padding:3px 10px;font-size:11px;color:#9d97ff;font-weight:700">${myOrders.length}/${(S.myTeam.members||[]).length}명</div>
-        <button id="settings-btn" style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:10px;width:34px;height:34px;display:flex;align-items:center;justify-content:center;font-size:16px">⚙️</button>
+        <div style="background:rgba(108,99,255,0.15);border:1px solid rgba(108,99,255,0.3);border-radius:20px;padding:3px 9px;font-size:11px;color:#9d97ff;font-weight:700">${myOrders.length}/${members.length}명</div>
+        <button id="settings-btn" style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:10px;width:33px;height:33px;display:flex;align-items:center;justify-content:center;font-size:16px">⚙️</button>
       </div>
     </div>
-    ${S.tab==="order"?`<div style="border-bottom:1px solid rgba(255,255,255,0.07);background:rgba(255,255,255,0.02)"><div style="display:flex;overflow-x:auto">${rTabs}</div></div>`:""}
-    <div style="flex:1;padding:13px 15px;padding-bottom:74px;overflow-y:auto">
+
+    <!-- 식당 탭 -->
+    ${S.tab==="order"?`
+    <div style="padding:10px 14px 8px;background:rgba(255,255,255,0.02);border-bottom:1px solid rgba(255,255,255,0.06);flex-shrink:0">
+      <div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:2px">${rTabs}</div>
+    </div>
+    ${menuPreview}`:""}
+
+    <!-- 컨텐츠 -->
+    <div style="flex:1;overflow-y:auto;padding:10px 12px;padding-bottom:68px">
       ${S.tab==="order"?`
-        <div style="font-size:11px;color:#5050a0;letter-spacing:1px;margin-bottom:9px;font-weight:700">👥 ${S.myTeam.name} · ${(S.myTeam.members||[]).length}명</div>
-        <div style="display:flex;flex-direction:column;gap:6px">${members}</div>
+        <div style="font-size:10px;color:#5050a0;letter-spacing:1px;margin-bottom:8px;font-weight:700">
+          👥 ${S.myTeam.name} · ${members.length}명
+          ${selR?`<span style="color:#6c63ff;margin-left:6px">· ${selR.emoji} ${selR.name} 선택됨</span>`:""}
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:7px">${memberGrid}</div>
       `:summaryHTML}
     </div>
+
+    <!-- 하단 탭바 -->
     <div style="position:fixed;bottom:0;left:0;right:0;z-index:50;background:rgba(13,13,26,0.97);backdrop-filter:blur(16px);border-top:1px solid rgba(255,255,255,0.07);display:flex">
-      <button data-tab="order" style="flex:1;padding:10px 0;background:none;border:none;border-top:2px solid ${S.tab==="order"?"#6c63ff":"transparent"};display:flex;flex-direction:column;align-items:center;gap:2px;color:${S.tab==="order"?"#9d97ff":"#404060"}">
+      <button data-tab="order" style="flex:1;padding:9px 0;background:none;border:none;border-top:2px solid ${S.tab==="order"?"#6c63ff":"transparent"};display:flex;flex-direction:column;align-items:center;gap:1px;color:${S.tab==="order"?"#9d97ff":"#404060"}">
         <span style="font-size:18px">🍽</span><span style="font-size:10px;font-weight:700">주문</span>
       </button>
-      <button data-tab="summary" style="flex:1;padding:10px 0;background:none;border:none;border-top:2px solid ${S.tab==="summary"?"#6c63ff":"transparent"};display:flex;flex-direction:column;align-items:center;gap:2px;color:${S.tab==="summary"?"#9d97ff":"#404060"}">
+      <button data-tab="summary" style="flex:1;padding:9px 0;background:none;border:none;border-top:2px solid ${S.tab==="summary"?"#6c63ff":"transparent"};display:flex;flex-direction:column;align-items:center;gap:1px;color:${S.tab==="summary"?"#9d97ff":"#404060"}">
         <span style="font-size:18px">📋</span><span style="font-size:10px;font-weight:700">현황</span>
       </button>
     </div>
   </div>
-  ${S.menuBoard?renderMenuBoard():""}
-  ${S.liveBoard?renderLiveBoard():""}
-  ${S.settings?renderSettings():""}
-  ${S.toast?`<div style="position:fixed;bottom:88px;left:50%;transform:translateX(-50%);background:rgba(20,20,50,0.97);backdrop-filter:blur(8px);border:1px solid rgba(108,99,255,0.4);border-radius:50px;padding:10px 20px;font-size:13px;font-weight:700;color:#fff;z-index:500;white-space:nowrap;animation:fadeUp 0.2s ease">${S.toast}</div>`:""}`;
+  ${menuSheetHTML}
+  ${liveBoardHTML}
+  ${settingsHTML}
+  ${toastHTML}`;
 }
 
-// ── 메뉴판 ───────────────────────────────────────────────────────
-function renderMenuBoard(){
-  const r=S.menuBoard.restaurant;
-  const memberName=S.menuBoard.member?.name||null;
-  const isPreview=!memberName;
-  const rTabsInner=S.restaurants.map(rt=>{
-    const active=rt.docId===r.docId; const cnt=countByRestaurant(rt.name);
-    return `<button data-switch="${rt.docId}" style="flex-shrink:0;background:none;border:none;border-bottom:2px solid ${active?"#6c63ff":"transparent"};padding:7px 12px 9px;font-size:12px;font-weight:700;color:${active?"#c4c0ff":"#505070"};display:flex;align-items:center;gap:4px">
-      ${rt.emoji} ${rt.name}${cnt>0?` <span style="background:#ff6b6b;border-radius:20px;font-size:9px;padding:1px 5px;color:#fff;font-weight:800">${cnt}</span>`:""}
-    </button>`;
-  }).join("");
+// ── 메뉴 시트 (선택된 식당 메뉴만) ──────────────────────────────
+function renderMenuSheet(){
+  const r=getSelectedRestaurant();
+  if(!r) return "";
+  const memberName=S.menuSheet.member.name;
   const menuItems=(r.menus||[]).map(m=>{
     const active=S.selectedMenu?.id===m.id;
-    const mOrders=S.allOrders.filter(o=>o.restaurant===r.name&&o.menu===m.name);
-    return `<button data-menu="${m.id}" style="background:${active?"rgba(108,99,255,0.22)":"rgba(255,255,255,0.04)"};border:1.5px solid ${active?"rgba(108,99,255,0.65)":"rgba(255,255,255,0.09)"};border-radius:12px;padding:13px 14px;cursor:${isPreview?"default":"pointer"};text-align:left;display:flex;justify-content:space-between;align-items:center;width:100%">
-      <div style="display:flex;align-items:center;gap:9px">
-        ${!isPreview?`<div style="width:19px;height:19px;border-radius:50%;border:2px solid ${active?"#9d97ff":"rgba(255,255,255,0.15)"};background:${active?"#6c63ff":"transparent"};display:flex;align-items:center;justify-content:center;flex-shrink:0">${active?`<div style="width:7px;height:7px;border-radius:50%;background:#fff"></div>`:""}</div>`:""}
-        <div>
-          <div style="font-size:14px;font-weight:600;color:${active?"#c4c0ff":"#e0e0f0"}">${m.name}</div>
-          ${mOrders.length>0?`<div style="font-size:11px;color:#ff9d60;margin-top:2px">${mOrders.map(o=>o.team).join(", ")} 주문중</div>`:""}
+    return `<button data-menu="${m.id}" style="
+      background:${active?"rgba(108,99,255,0.22)":"rgba(255,255,255,0.05)"};
+      border:1.5px solid ${active?"rgba(108,99,255,0.65)":"rgba(255,255,255,0.09)"};
+      border-radius:13px;padding:14px 16px;
+      text-align:left;display:flex;justify-content:space-between;align-items:center;width:100%;
+      transition:all 0.14s;
+    ">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="width:20px;height:20px;border-radius:50%;border:2px solid ${active?"#9d97ff":"rgba(255,255,255,0.2)"};background:${active?"#6c63ff":"transparent"};display:flex;align-items:center;justify-content:center;flex-shrink:0">
+          ${active?`<div style="width:7px;height:7px;border-radius:50%;background:#fff"></div>`:""}
         </div>
+        <span style="font-size:15px;font-weight:600;color:${active?"#c4c0ff":"#e0e0f0"}">${m.name}</span>
       </div>
-      <span style="font-size:14px;font-weight:700;color:${active?"#9d97ff":"#6060a0"};flex-shrink:0">${fmt(m.price)}</span>
+      <span style="font-size:15px;font-weight:700;color:${active?"#9d97ff":"#6060a0"};flex-shrink:0">${fmt(m.price)}</span>
     </button>`;
   }).join("");
-  return `<div id="mb-wrap" style="position:fixed;inset:0;z-index:100;display:flex;flex-direction:column;justify-content:flex-end">
-    <div id="mb-bg" style="position:absolute;inset:0;background:rgba(0,0,0,0.72);backdrop-filter:blur(6px)"></div>
-    <div style="position:relative;z-index:1;background:#13132a;border:1px solid rgba(255,255,255,0.1);border-radius:24px 24px 0 0;max-height:90vh;display:flex;flex-direction:column;overflow:hidden;animation:slideUp 0.3s ease">
-      <div style="padding:12px 0 0;display:flex;justify-content:center;flex-shrink:0"><div style="width:36px;height:4px;border-radius:2px;background:rgba(255,255,255,0.15)"></div></div>
-      <div style="display:flex;padding:6px 14px 0;overflow-x:auto;flex-shrink:0;border-bottom:1px solid rgba(255,255,255,0.07)">${rTabsInner}</div>
-      <div style="padding:12px 17px 8px;flex-shrink:0;display:flex;align-items:center;justify-content:space-between">
+
+  return `<div style="position:fixed;inset:0;z-index:100;display:flex;flex-direction:column;justify-content:flex-end">
+    <div id="ms-bg" style="position:absolute;inset:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(5px)"></div>
+    <div style="position:relative;z-index:1;background:#13132a;border:1px solid rgba(255,255,255,0.1);border-radius:24px 24px 0 0;max-height:80vh;display:flex;flex-direction:column;overflow:hidden;animation:slideUp 0.25s ease">
+      <div style="padding:12px 0 0;display:flex;justify-content:center;flex-shrink:0">
+        <div style="width:36px;height:4px;border-radius:2px;background:rgba(255,255,255,0.15)"></div>
+      </div>
+      <div style="padding:13px 18px 10px;flex-shrink:0;display:flex;align-items:center;justify-content:space-between">
         <div>
-          <div style="font-size:18px;font-weight:900;color:#fff">${r.emoji} ${r.name}</div>
-          ${memberName?`<div style="font-size:12px;color:#6060a0;margin-top:2px">👤 ${memberName}님 메뉴를 선택해주세요</div>`:`<div style="font-size:11px;color:#404060;margin-top:1px">전체 ${countByRestaurant(r.name)}명 주문 중</div>`}
+          <div style="font-size:19px;font-weight:900;color:#fff">${r.emoji} ${r.name}</div>
+          <div style="font-size:12px;color:#6060a0;margin-top:2px">👤 ${memberName}님 메뉴를 선택해주세요</div>
         </div>
-        <button id="mb-close" style="background:rgba(255,255,255,0.07);border:none;border-radius:50%;width:31px;height:31px;color:#9090c0;font-size:14px;display:flex;align-items:center;justify-content:center">✕</button>
+        <button id="ms-close" style="background:rgba(255,255,255,0.07);border:none;border-radius:50%;width:31px;height:31px;color:#9090c0;font-size:14px;display:flex;align-items:center;justify-content:center">✕</button>
       </div>
-      <div style="overflow-y:auto;flex:1">
-        ${r.image?`<img src="${r.image}" style="width:100%;max-height:220px;object-fit:cover;display:block">`:`<div style="margin:0 17px 12px;background:rgba(255,255,255,0.02);border:1.5px dashed rgba(255,255,255,0.07);border-radius:13px;height:85px;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#303050;gap:4px"><span style="font-size:20px">🖼</span><span style="font-size:11px">식단표 이미지 준비 중</span></div>`}
-        <div style="padding:0 17px 8px">
-          <div style="font-size:10px;color:#5050a0;font-weight:700;letter-spacing:1px;margin-bottom:6px">MENU</div>
-          <div style="display:flex;flex-direction:column;gap:6px">${menuItems}</div>
-        </div>
+      <div style="overflow-y:auto;flex:1;padding:0 18px 8px">
+        ${r.image?`<img src="${r.image}" style="width:100%;max-height:180px;object-fit:cover;border-radius:12px;display:block;margin-bottom:12px">`:`<div style="background:rgba(255,255,255,0.02);border:1.5px dashed rgba(255,255,255,0.07);border-radius:12px;height:70px;display:flex;align-items:center;justify-content:center;color:#303050;font-size:12px;margin-bottom:12px;gap:6px"><span>🖼</span><span>식단표 이미지 준비 중</span></div>`}
+        <div style="display:flex;flex-direction:column;gap:7px">${menuItems}</div>
       </div>
-      ${!isPreview?`<div style="padding:11px 17px 26px;flex-shrink:0;border-top:1px solid rgba(255,255,255,0.07)">
-        <button id="mb-order" style="width:100%;padding:14px;background:${S.selectedMenu?"linear-gradient(135deg,#6c63ff,#9d97ff)":"rgba(255,255,255,0.06)"};border:none;border-radius:12px;font-size:15px;font-weight:800;color:${S.selectedMenu?"#fff":"#333355"};cursor:${S.selectedMenu?"pointer":"not-allowed"}">
+      <div style="padding:12px 18px 28px;flex-shrink:0;border-top:1px solid rgba(255,255,255,0.07)">
+        <button id="ms-order" style="width:100%;padding:15px;background:${S.selectedMenu?"linear-gradient(135deg,#6c63ff,#9d97ff)":"rgba(255,255,255,0.06)"};border:none;border-radius:13px;font-size:15px;font-weight:800;color:${S.selectedMenu?"#fff":"#333355"};cursor:${S.selectedMenu?"pointer":"not-allowed"}">
           ${S.selectedMenu?`✓ ${S.selectedMenu.name} 주문하기`:"메뉴를 선택해주세요"}
         </button>
-      </div>`:""}
+      </div>
     </div>
   </div>`;
 }
@@ -443,42 +489,41 @@ function renderLiveBoard(){
     const total=rOrders.length; const teams=[...new Set(rOrders.map(o=>o.team))];
     const barW=Math.min((total/15)*100,100);
     const barColor=total===0?"transparent":total>=10?"#ff6b6b":total>=6?"#ff9d60":"#6c63ff";
-    return `<div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.07);border-radius:15px;padding:14px 16px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-        <div style="display:flex;align-items:center;gap:8px"><span style="font-size:20px">${r.emoji}</span><span style="font-size:14px;font-weight:800;color:#fff">${r.name}</span></div>
+    return `<div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.07);border-radius:14px;padding:13px 15px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:7px">
+        <div style="display:flex;align-items:center;gap:7px"><span style="font-size:20px">${r.emoji}</span><span style="font-size:14px;font-weight:800;color:#fff">${r.name}</span></div>
         <span style="font-size:18px;font-weight:900;color:${total>0?"#ff9d60":"#303050"}">${total}명</span>
       </div>
-      <div style="background:rgba(255,255,255,0.06);border-radius:20px;height:7px;margin-bottom:7px;overflow:hidden">
+      <div style="background:rgba(255,255,255,0.06);border-radius:20px;height:6px;margin-bottom:6px;overflow:hidden">
         <div style="height:100%;border-radius:20px;width:${barW}%;background:${barColor};transition:width 0.5s ease"></div>
       </div>
       ${teams.length>0?`<div style="display:flex;gap:4px;flex-wrap:wrap">${teams.map(t=>`<span style="font-size:10px;background:rgba(108,99,255,0.2);border:1px solid rgba(108,99,255,0.3);border-radius:20px;padding:2px 7px;color:#9d97ff;font-weight:700">${t}</span>`).join("")}</div>`:`<div style="font-size:11px;color:#303050">아직 주문 없음</div>`}
     </div>`;
   }).join("");
   const tickerInner=ticker.length===0
-    ?`<div style="text-align:center;color:#404060;font-size:13px;padding:0 20px">주문을 기다리는 중...</div>`
-    :`<div style="display:flex;gap:48px;animation:marquee 20s linear infinite;white-space:nowrap">${[...ticker,...ticker].map(o=>`<span style="font-size:13px;color:#c0c0e0;font-weight:600"><span style="color:#9d97ff">${o.team}</span> ${o.member} → <span style="color:#ff9d60">${o.restaurantEmoji}${o.restaurant}</span> ${o.menu} <span style="color:#505070">${o.at}</span></span>`).join("")}</div>`;
+    ?`<div style="text-align:center;color:#404060;font-size:12px;padding:0 20px">주문을 기다리는 중...</div>`
+    :`<div style="display:flex;gap:40px;animation:marquee 20s linear infinite;white-space:nowrap">${[...ticker,...ticker].map(o=>`<span style="font-size:12px;color:#c0c0e0;font-weight:600"><span style="color:#9d97ff">${o.team}</span> ${o.member} → <span style="color:#ff9d60">${o.restaurantEmoji}${o.restaurant}</span> ${o.menu}</span>`).join("")}</div>`;
   return `<div style="position:fixed;inset:0;z-index:200;background:#07071a;display:flex;flex-direction:column">
-    <div style="padding:18px 20px 14px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,0.07)">
+    <div style="padding:16px 18px 12px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,0.07)">
       <div><div style="font-size:10px;color:#ff6b6b;letter-spacing:3px;font-weight:700">● LIVE</div><div style="font-size:20px;font-weight:900;color:#fff">🍽 오늘 주문 현황</div></div>
-      <button id="live-close" style="background:rgba(255,255,255,0.07);border:none;border-radius:10px;padding:7px 14px;color:#9090c0;font-size:13px;font-weight:700">닫기</button>
+      <button id="live-close" style="background:rgba(255,255,255,0.07);border:none;border-radius:10px;padding:6px 13px;color:#9090c0;font-size:13px;font-weight:700">닫기</button>
     </div>
-    <div style="flex:1;overflow-y:auto;padding:14px 16px 0"><div style="display:flex;flex-direction:column;gap:9px;margin-bottom:20px">${barItems}</div></div>
-    <div style="border-top:1px solid rgba(108,99,255,0.2);background:rgba(108,99,255,0.08);padding:11px 0;overflow:hidden;flex-shrink:0">${tickerInner}</div>
+    <div style="flex:1;overflow-y:auto;padding:13px 15px 0"><div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px">${barItems}</div></div>
+    <div style="border-top:1px solid rgba(108,99,255,0.2);background:rgba(108,99,255,0.08);padding:10px 0;overflow:hidden;flex-shrink:0">${tickerInner}</div>
   </div>`;
 }
 
 // ── 설정창 ────────────────────────────────────────────────────────
 function renderSettings(){
-  const t = S.myTeam;
-  const members = (t?.members||[]);
+  const t=S.myTeam;
+  const members=(t?.members||[]);
 
-  // 팀원 목록 (내 조만)
-  const memberRows = members.map(m=>{
-    const isEditing = S.editMemberId === m.id;
-    if(isEditing){
+  // 팀원 목록
+  const memberRows=members.map(m=>{
+    if(S.editMemberId===m.id){
       return `<div style="background:rgba(108,99,255,0.1);border:1.5px solid rgba(108,99,255,0.4);border-radius:10px;padding:10px;margin-bottom:6px">
         <div style="display:flex;gap:5px;margin-bottom:6px">
-          <input id="edit-mno" placeholder="번호" value="${S.editMemberNo}" style="width:52px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:7px;padding:7px 8px;color:#e0e0f0;font-size:13px;outline:none"/>
+          <input id="edit-mno" placeholder="번호" value="${S.editMemberNo}" style="width:50px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:7px;padding:7px 8px;color:#e0e0f0;font-size:13px;outline:none"/>
           <input id="edit-mname" placeholder="이름" value="${S.editMemberName}" style="flex:1;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:7px;padding:7px 9px;color:#e0e0f0;font-size:13px;outline:none"/>
         </div>
         <div style="display:flex;gap:5px">
@@ -496,26 +541,18 @@ function renderSettings(){
     </div>`;
   }).join("");
 
-  // 팀원 추가 폼
-  const addMemberForm = `<div style="display:flex;gap:5px;margin-top:8px">
-    <input id="inp-no" placeholder="번호" value="${S.newMemberNo}" style="width:52px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.13);border-radius:8px;padding:7px 8px;color:#e0e0f0;font-size:13px;outline:none"/>
-    <input id="inp-name" placeholder="이름" value="${S.newMemberName}" style="flex:1;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.13);border-radius:8px;padding:7px 9px;color:#e0e0f0;font-size:13px;outline:none"/>
-    <button id="add-member-btn" style="background:linear-gradient(135deg,#6c63ff,#9d97ff);border:none;border-radius:8px;padding:7px 13px;color:#fff;font-size:12px;font-weight:700;white-space:nowrap">+ 추가</button>
-  </div>`;
+  // 식당 목록 (수정+메뉴 통합)
+  const restaurantsHTML=S.restaurants.map(r=>{
+    const isExpanded=S.expandedRestaurantId===r.docId;
+    const isEditingR=S.editRestaurantId===r.docId;
 
-  // 식당 목록
-  const restaurantsHTML = S.restaurants.map(r=>{
-    const isExpanded = S.expandedRestaurantId === r.docId;
-    const isEditingR = S.editRestaurantId === r.docId;
-
-    // 식당 편집 폼
     if(isEditingR){
       return `<div style="background:rgba(108,99,255,0.1);border:1.5px solid rgba(108,99,255,0.4);border-radius:12px;padding:12px;margin-bottom:8px">
         <div style="font-size:11px;color:#9d97ff;margin-bottom:8px">식당 정보 수정</div>
         <div style="display:flex;gap:5px;margin-bottom:6px">
-          <input id="edit-remoji" placeholder="🍽" value="${S.editRestaurantEmoji}" style="width:46px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:7px;padding:7px 8px;color:#e0e0f0;font-size:14px;outline:none;text-align:center"/>
-          <input id="edit-rname" placeholder="식당 이름" value="${S.editRestaurantName}" style="flex:2;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:7px;padding:7px 9px;color:#e0e0f0;font-size:13px;outline:none"/>
-          <input id="edit-rcat" placeholder="카테고리" value="${S.editRestaurantCategory}" style="flex:1;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:7px;padding:7px 9px;color:#e0e0f0;font-size:13px;outline:none"/>
+          <input id="edit-remoji" value="${S.editRestaurantEmoji}" style="width:44px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:7px;padding:7px;color:#e0e0f0;font-size:14px;outline:none;text-align:center"/>
+          <input id="edit-rname" value="${S.editRestaurantName}" placeholder="식당명" style="flex:2;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:7px;padding:7px 9px;color:#e0e0f0;font-size:13px;outline:none"/>
+          <input id="edit-rcat" value="${S.editRestaurantCategory}" placeholder="카테고리" style="flex:1;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:7px;padding:7px 9px;color:#e0e0f0;font-size:13px;outline:none"/>
         </div>
         <div style="display:flex;gap:5px">
           <button data-save-r="${r.docId}" style="flex:1;background:linear-gradient(135deg,#6c63ff,#9d97ff);border:none;border-radius:7px;padding:8px;color:#fff;font-size:13px;font-weight:700">저장</button>
@@ -524,13 +561,12 @@ function renderSettings(){
       </div>`;
     }
 
-    const menuRows = (r.menus||[]).map(m=>{
-      const isEditingM = S.editMenuId===m.id && S.editMenuRestaurantId===r.docId;
-      if(isEditingM){
+    const menuRows=(r.menus||[]).map(m=>{
+      if(S.editMenuId===m.id && S.editMenuRestaurantId===r.docId){
         return `<div style="background:rgba(108,99,255,0.1);border:1.5px solid rgba(108,99,255,0.35);border-radius:8px;padding:9px;margin-bottom:5px">
           <div style="display:flex;gap:5px;margin-bottom:6px">
-            <input id="edit-mname2" placeholder="메뉴 이름" value="${S.editMenuName}" style="flex:2;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:7px;padding:7px 9px;color:#e0e0f0;font-size:13px;outline:none"/>
-            <input id="edit-mprice" placeholder="가격" type="number" value="${S.editMenuPrice}" style="flex:1;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:7px;padding:7px 8px;color:#e0e0f0;font-size:13px;outline:none"/>
+            <input id="edit-mname2" value="${S.editMenuName}" placeholder="메뉴명" style="flex:2;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:7px;padding:7px 9px;color:#e0e0f0;font-size:13px;outline:none"/>
+            <input id="edit-mprice" type="number" value="${S.editMenuPrice}" placeholder="가격" style="flex:1;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:7px;padding:7px 8px;color:#e0e0f0;font-size:13px;outline:none"/>
           </div>
           <div style="display:flex;gap:5px">
             <button data-save-menu="${r.docId}" style="flex:1;background:linear-gradient(135deg,#6c63ff,#9d97ff);border:none;border-radius:7px;padding:7px;color:#fff;font-size:12px;font-weight:700">저장</button>
@@ -540,9 +576,9 @@ function renderSettings(){
       }
       return `<div style="display:flex;align-items:center;justify-content:space-between;background:rgba(255,255,255,0.03);border-radius:8px;padding:7px 10px;margin-bottom:4px">
         <span style="font-size:13px;color:#c0c0d8">${m.name} <span style="color:#9d97ff;font-weight:700">${fmt(m.price)}</span></span>
-        <div style="display:flex;gap:6px">
-          <button data-edit-menu="${r.docId}__${m.id}" style="background:rgba(108,99,255,0.15);border:1px solid rgba(108,99,255,0.3);border-radius:6px;padding:4px 9px;color:#9d97ff;font-size:11px;font-weight:700">수정</button>
-          <button data-rm-menu="${r.docId}__${m.id}" style="background:none;border:none;color:#ff6060;font-size:16px;line-height:1;padding:0 2px">×</button>
+        <div style="display:flex;gap:5px">
+          <button data-edit-menu="${r.docId}__${m.id}" style="background:rgba(108,99,255,0.15);border:1px solid rgba(108,99,255,0.3);border-radius:6px;padding:4px 8px;color:#9d97ff;font-size:11px;font-weight:700">수정</button>
+          <button data-rm-menu="${r.docId}__${m.id}" style="background:none;border:none;color:#ff6060;font-size:15px;line-height:1;padding:0 2px">×</button>
         </div>
       </div>`;
     }).join("");
@@ -553,29 +589,31 @@ function renderSettings(){
           <button data-toggle-r="${r.docId}" style="background:none;border:none;color:#9d97ff;font-size:14px;padding:0">${isExpanded?"▾":"▸"}</button>
           <span style="font-size:18px">${r.emoji}</span>
           <span style="font-size:14px;font-weight:800;color:#fff">${r.name}</span>
-          <span style="font-size:10px;background:rgba(255,157,96,0.2);border-radius:20px;padding:2px 7px;color:#ff9d60">${r.category}</span>
+          <span style="font-size:10px;background:rgba(255,157,96,0.15);border-radius:20px;padding:2px 7px;color:#ff9d60">${r.category}</span>
+          <span style="font-size:10px;color:#5050a0">${(r.menus||[]).length}메뉴</span>
         </div>
         <div style="display:flex;gap:5px">
-          <button data-edit-r="${r.docId}" style="background:rgba(108,99,255,0.15);border:1px solid rgba(108,99,255,0.3);border-radius:6px;padding:4px 9px;color:#9d97ff;font-size:11px;font-weight:700">수정</button>
-          <button data-rm-r="${r.docId}" style="background:rgba(255,80,80,0.12);border:1px solid rgba(255,80,80,0.28);border-radius:6px;padding:4px 9px;color:#ff8080;font-size:11px">삭제</button>
+          <button data-edit-r="${r.docId}" style="background:rgba(108,99,255,0.15);border:1px solid rgba(108,99,255,0.3);border-radius:6px;padding:4px 8px;color:#9d97ff;font-size:11px;font-weight:700">수정</button>
+          <button data-rm-r="${r.docId}" style="background:rgba(255,80,80,0.12);border:1px solid rgba(255,80,80,0.28);border-radius:6px;padding:4px 8px;color:#ff8080;font-size:11px">삭제</button>
         </div>
       </div>
       ${isExpanded?`
-        <div style="margin-top:10px">
-          <!-- 이미지 -->
-          <label data-img-label="${r.docId}" style="display:flex;align-items:center;gap:8px;background:rgba(255,255,255,0.04);border:1.5px dashed rgba(255,255,255,0.1);border-radius:9px;padding:8px 12px;cursor:pointer;margin-bottom:9px">
-            ${r.image?`<img src="${r.image}" style="width:42px;height:42px;object-fit:cover;border-radius:7px"><span style="font-size:12px;color:#9d97ff">이미지 변경</span>`:`<span style="font-size:18px">🖼</span><span style="font-size:12px;color:#6060a0">식단표 이미지 추가</span>`}
-          </label>
-          <input type="file" accept="image/*" data-img-input="${r.docId}" style="display:none"/>
-          <!-- 메뉴 목록 -->
-          <div>${menuRows}</div>
-          <!-- 메뉴 추가 -->
-          <div style="display:flex;gap:5px;margin-top:7px">
-            <input id="inp-mname" placeholder="메뉴 이름" value="${S.newMenuName}" style="flex:2;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.13);border-radius:8px;padding:7px 9px;color:#e0e0f0;font-size:13px;outline:none"/>
-            <input id="inp-mprice" placeholder="가격" type="number" value="${S.newMenuPrice}" style="flex:1;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.13);border-radius:8px;padding:7px 8px;color:#e0e0f0;font-size:13px;outline:none"/>
-            <button data-add-menu="${r.docId}" style="background:linear-gradient(135deg,#6c63ff,#9d97ff);border:none;border-radius:8px;padding:7px 12px;color:#fff;font-size:12px;font-weight:700;white-space:nowrap">+ 추가</button>
-          </div>
-        </div>`:""}
+      <div style="margin-top:10px">
+        <!-- 이미지 -->
+        <label data-img-label="${r.docId}" style="display:flex;align-items:center;gap:8px;background:rgba(255,255,255,0.04);border:1.5px dashed rgba(255,255,255,0.1);border-radius:9px;padding:8px 12px;cursor:pointer;margin-bottom:9px">
+          ${r.image?`<img src="${r.image}" style="width:40px;height:40px;object-fit:cover;border-radius:7px"><span style="font-size:12px;color:#9d97ff">이미지 변경</span>`:`<span style="font-size:18px">🖼</span><span style="font-size:12px;color:#6060a0">식단표 이미지 추가</span>`}
+        </label>
+        <input type="file" accept="image/*" data-img-input="${r.docId}" style="display:none"/>
+        <!-- 메뉴 목록 -->
+        <div style="font-size:10px;color:#5050a0;font-weight:700;letter-spacing:1px;margin-bottom:6px">메뉴 목록</div>
+        ${menuRows.length?menuRows:`<div style="font-size:12px;color:#404060;margin-bottom:6px">메뉴 없음</div>`}
+        <!-- 메뉴 추가 -->
+        <div style="display:flex;gap:5px;margin-top:7px">
+          <input id="inp-mname" placeholder="메뉴 이름" value="${S.newMenuName}" style="flex:2;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.13);border-radius:8px;padding:7px 9px;color:#e0e0f0;font-size:13px;outline:none"/>
+          <input id="inp-mprice" placeholder="가격" type="number" value="${S.newMenuPrice}" style="flex:1;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.13);border-radius:8px;padding:7px 8px;color:#e0e0f0;font-size:13px;outline:none"/>
+          <button data-add-menu="${r.docId}" style="background:linear-gradient(135deg,#6c63ff,#9d97ff);border:none;border-radius:8px;padding:7px 12px;color:#fff;font-size:12px;font-weight:700;white-space:nowrap">+</button>
+        </div>
+      </div>`:""}
     </div>`;
   }).join("");
 
@@ -583,41 +621,37 @@ function renderSettings(){
     <div id="st-bg" style="position:absolute;inset:0;background:rgba(0,0,0,0.75);backdrop-filter:blur(6px)"></div>
     <div style="position:relative;z-index:1;background:#10101f;border:1px solid rgba(255,255,255,0.1);border-radius:24px 24px 0 0;height:88vh;display:flex;flex-direction:column;overflow:hidden;animation:slideUp 0.3s ease">
       <div style="padding:12px 0 0;display:flex;justify-content:center;flex-shrink:0"><div style="width:36px;height:4px;border-radius:2px;background:rgba(255,255,255,0.15)"></div></div>
-      <div style="padding:11px 16px 9px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;border-bottom:1px solid rgba(255,255,255,0.07)">
-        <div style="font-size:17px;font-weight:900;color:#fff">⚙️ 설정</div>
+      <div style="padding:10px 15px 9px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;border-bottom:1px solid rgba(255,255,255,0.07)">
+        <div style="font-size:16px;font-weight:900;color:#fff">⚙️ 설정</div>
         <div style="display:flex;align-items:center;gap:7px">
-          <button id="change-team-btn" style="background:rgba(108,99,255,0.15);border:1px solid rgba(108,99,255,0.3);border-radius:20px;padding:5px 11px;font-size:11px;color:#9d97ff;font-weight:700">조 변경</button>
-          <button id="st-close" style="background:rgba(255,255,255,0.07);border:none;border-radius:50%;width:31px;height:31px;color:#9090c0;font-size:14px;display:flex;align-items:center;justify-content:center">✕</button>
+          <button id="change-team-btn" style="background:rgba(108,99,255,0.15);border:1px solid rgba(108,99,255,0.3);border-radius:20px;padding:4px 11px;font-size:11px;color:#9d97ff;font-weight:700">조 변경</button>
+          <button id="st-close" style="background:rgba(255,255,255,0.07);border:none;border-radius:50%;width:30px;height:30px;color:#9090c0;font-size:14px;display:flex;align-items:center;justify-content:center">✕</button>
         </div>
       </div>
-      <!-- 탭 -->
       <div style="display:flex;border-bottom:1px solid rgba(255,255,255,0.07);flex-shrink:0">
-        <button data-stab="teams" style="flex:1;padding:10px;background:none;border:none;border-bottom:2px solid ${S.settingsTab==="teams"?"#6c63ff":"transparent"};font-size:13px;font-weight:700;color:${S.settingsTab==="teams"?"#9d97ff":"#505070"}">👥 팀원 관리</button>
-        <button data-stab="restaurants" style="flex:1;padding:10px;background:none;border:none;border-bottom:2px solid ${S.settingsTab==="restaurants"?"#6c63ff":"transparent"};font-size:13px;font-weight:700;color:${S.settingsTab==="restaurants"?"#9d97ff":"#505070"}">🏪 식당 관리</button>
+        <button data-stab="teams" style="flex:1;padding:10px;background:none;border:none;border-bottom:2px solid ${S.settingsTab==="teams"?"#6c63ff":"transparent"};font-size:12px;font-weight:700;color:${S.settingsTab==="teams"?"#9d97ff":"#505070"}">👥 팀원 관리</button>
+        <button data-stab="restaurants" style="flex:1;padding:10px;background:none;border:none;border-bottom:2px solid ${S.settingsTab==="restaurants"?"#6c63ff":"transparent"};font-size:12px;font-weight:700;color:${S.settingsTab==="restaurants"?"#9d97ff":"#505070"}">🏪 식당 관리</button>
       </div>
-      <!-- 컨텐츠 -->
-      <div style="flex:1;overflow-y:auto;padding:14px 14px 28px">
+      <div style="flex:1;overflow-y:auto;padding:13px 13px 24px">
         ${S.settingsTab==="teams"?`
-          <!-- 내 조 표시 -->
-          <div style="display:flex;align-items:center;gap:8px;background:rgba(108,99,255,0.1);border:1px solid rgba(108,99,255,0.25);border-radius:10px;padding:10px 13px;margin-bottom:13px">
-            <span style="font-size:18px">👥</span>
-            <div>
-              <div style="font-size:13px;font-weight:800;color:#fff">${t?.name}</div>
-              <div style="font-size:11px;color:#7070a0">${members.length}명</div>
-            </div>
+          <div style="display:flex;align-items:center;gap:8px;background:rgba(108,99,255,0.1);border:1px solid rgba(108,99,255,0.25);border-radius:10px;padding:9px 12px;margin-bottom:12px">
+            <span style="font-size:17px">👥</span>
+            <div><div style="font-size:13px;font-weight:800;color:#fff">${t?.name}</div><div style="font-size:11px;color:#7070a0">${members.length}명</div></div>
           </div>
-          <!-- 팀원 목록 -->
-          <div>${memberRows}</div>
-          ${addMemberForm}
+          ${memberRows}
+          <div style="display:flex;gap:5px;margin-top:8px">
+            <input id="inp-no" placeholder="번호" value="${S.newMemberNo}" style="width:50px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.13);border-radius:8px;padding:7px 8px;color:#e0e0f0;font-size:13px;outline:none"/>
+            <input id="inp-name" placeholder="이름" value="${S.newMemberName}" style="flex:1;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.13);border-radius:8px;padding:7px 9px;color:#e0e0f0;font-size:13px;outline:none"/>
+            <button id="add-member-btn" style="background:linear-gradient(135deg,#6c63ff,#9d97ff);border:none;border-radius:8px;padding:7px 13px;color:#fff;font-size:12px;font-weight:700;white-space:nowrap">+ 추가</button>
+          </div>
         `:`
-          <!-- 식당 추가 -->
-          <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:12px;margin-bottom:11px">
-            <div style="font-size:11px;color:#6060a0;margin-bottom:8px">새 식당 추가</div>
+          <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:11px;padding:11px;margin-bottom:10px">
+            <div style="font-size:11px;color:#6060a0;margin-bottom:7px">새 식당 추가</div>
             <div style="display:flex;gap:5px;flex-wrap:wrap">
-              <input id="inp-remoji" placeholder="🍽" value="${S.newRestaurantEmoji}" style="width:46px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.13);border-radius:8px;padding:7px 8px;color:#e0e0f0;font-size:14px;outline:none;text-align:center"/>
-              <input id="inp-rname" placeholder="식당 이름" value="${S.newRestaurantName}" style="flex:2;min-width:100px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.13);border-radius:8px;padding:7px 9px;color:#e0e0f0;font-size:13px;outline:none"/>
-              <input id="inp-rcat" placeholder="카테고리" value="${S.newRestaurantCategory}" style="flex:1;min-width:70px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.13);border-radius:8px;padding:7px 9px;color:#e0e0f0;font-size:13px;outline:none"/>
-              <button id="add-r-btn" style="background:linear-gradient(135deg,#6c63ff,#9d97ff);border:none;border-radius:8px;padding:7px 13px;color:#fff;font-size:12px;font-weight:700;white-space:nowrap">+ 추가</button>
+              <input id="inp-remoji" placeholder="🍽" value="${S.newRestaurantEmoji}" style="width:44px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.13);border-radius:7px;padding:7px;color:#e0e0f0;font-size:14px;outline:none;text-align:center"/>
+              <input id="inp-rname" placeholder="식당 이름" value="${S.newRestaurantName}" style="flex:2;min-width:90px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.13);border-radius:7px;padding:7px 9px;color:#e0e0f0;font-size:13px;outline:none"/>
+              <input id="inp-rcat" placeholder="카테고리" value="${S.newRestaurantCategory}" style="flex:1;min-width:65px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.13);border-radius:7px;padding:7px 9px;color:#e0e0f0;font-size:13px;outline:none"/>
+              <button id="add-r-btn" style="background:linear-gradient(135deg,#6c63ff,#9d97ff);border:none;border-radius:7px;padding:7px 12px;color:#fff;font-size:12px;font-weight:700;white-space:nowrap">+추가</button>
             </div>
           </div>
           ${restaurantsHTML}
@@ -631,36 +665,32 @@ function renderSettings(){
 function bindMain(){
   document.getElementById("live-btn")?.addEventListener("click",()=>{S.liveBoard=true;render();});
   document.getElementById("settings-btn")?.addEventListener("click",()=>{S.settings=true;render();});
+
+  // 식당 탭 선택
   document.querySelectorAll("[data-rtab]").forEach(btn=>{
-    btn.onmouseenter=()=>{btn.style.color="#c4c0ff";btn.style.borderBottomColor="rgba(108,99,255,0.5)";};
-    btn.onmouseleave=()=>{btn.style.color="#606080";btn.style.borderBottomColor="transparent";};
-    btn.onclick=()=>{const r=S.restaurants.find(r=>r.docId===btn.dataset.rtab);if(r){S.menuBoard={restaurant:r,member:null};S.selectedMenu=null;render();}};
+    btn.onclick=()=>{S.selectedRestaurantId=btn.dataset.rtab;render();};
   });
+
+  // 팀원 그리드 클릭
   document.querySelectorAll("[data-member]").forEach(btn=>{
-    btn.onmouseenter=()=>btn.style.background=getMyOrder(S.myTeam.members?.find(m=>m.id===btn.dataset.member)?.name)?"rgba(60,200,120,0.13)":"rgba(108,99,255,0.14)";
-    btn.onmouseleave=()=>{const o=getMyOrder(S.myTeam.members?.find(m=>m.id===btn.dataset.member)?.name);btn.style.background=o?"rgba(60,200,120,0.07)":"rgba(255,255,255,0.05)";};
     btn.onclick=()=>{
-      const m=S.myTeam.members?.find(m=>m.id===btn.dataset.member);if(!m)return;
-      const order=getMyOrder(m.name);
-      const r=order?S.restaurants.find(r=>r.name===order.restaurant)||S.restaurants[0]:S.restaurants[0];
-      if(r){S.menuBoard={restaurant:r,member:m};S.selectedMenu=null;render();}
+      if(!S.selectedRestaurantId){ showToast("⚠️ 먼저 식당을 선택해주세요"); return; }
+      const m=S.myTeam.members?.find(m=>m.id===btn.dataset.member); if(!m) return;
+      S.menuSheet={member:m}; S.selectedMenu=null; render();
     };
   });
+
   document.querySelectorAll("[data-tab]").forEach(btn=>{btn.onclick=()=>{S.tab=btn.dataset.tab;render();};});
   document.querySelectorAll("[data-delete]").forEach(btn=>{btn.onclick=async()=>{await deleteDoc(doc(db,"orders",btn.dataset.delete));};});
 }
 
-function bindMenuBoard(){
-  document.getElementById("mb-bg")?.addEventListener("click",()=>{S.menuBoard=null;S.selectedMenu=null;render();});
-  document.getElementById("mb-close")?.addEventListener("click",()=>{S.menuBoard=null;S.selectedMenu=null;render();});
-  document.querySelectorAll("[data-switch]").forEach(btn=>{
-    btn.onclick=()=>{const r=S.restaurants.find(r=>r.docId===btn.dataset.switch);if(r){S.menuBoard={...S.menuBoard,restaurant:r};S.selectedMenu=null;render();}};
-  });
+function bindMenuSheet(){
+  document.getElementById("ms-bg")?.addEventListener("click",()=>{S.menuSheet=null;S.selectedMenu=null;render();});
+  document.getElementById("ms-close")?.addEventListener("click",()=>{S.menuSheet=null;S.selectedMenu=null;render();});
   document.querySelectorAll("[data-menu]").forEach(btn=>{
-    if(!S.menuBoard?.member)return;
-    btn.onclick=()=>{const m=S.menuBoard.restaurant.menus?.find(m=>m.id===btn.dataset.menu);S.selectedMenu=m;render();};
+    btn.onclick=()=>{const r=getSelectedRestaurant();const m=r?.menus?.find(m=>m.id===btn.dataset.menu);S.selectedMenu=m;render();};
   });
-  document.getElementById("mb-order")?.addEventListener("click",()=>{if(S.selectedMenu)submitOrder(S.selectedMenu);});
+  document.getElementById("ms-order")?.addEventListener("click",()=>{if(S.selectedMenu)submitOrder(S.selectedMenu);});
 }
 
 function bindLiveBoard(){
@@ -670,18 +700,18 @@ function bindLiveBoard(){
 function bindSettings(){
   document.getElementById("st-bg")?.addEventListener("click",()=>{S.settings=false;render();});
   document.getElementById("st-close")?.addEventListener("click",()=>{S.settings=false;render();});
-  document.getElementById("change-team-btn")?.addEventListener("click",()=>{S.settings=false;S.screen="teamSelect";S.myTeam=null;render();});
+  document.getElementById("change-team-btn")?.addEventListener("click",()=>{
+    localStorage.removeItem("myTeamDocId"); // 저장 해제
+    S.myTeamDocId=null; S.settings=false; S.screen="teamSelect"; S.myTeam=null; render();
+  });
   document.querySelectorAll("[data-stab]").forEach(btn=>{btn.onclick=()=>{S.settingsTab=btn.dataset.stab;render();};});
 
-  // 팀원 관리
+  // 팀원
   document.getElementById("inp-no")?.addEventListener("input",e=>S.newMemberNo=e.target.value);
   document.getElementById("inp-name")?.addEventListener("input",e=>S.newMemberName=e.target.value);
   document.getElementById("add-member-btn")?.addEventListener("click",addMember);
   document.querySelectorAll("[data-edit-member]").forEach(btn=>{
-    btn.onclick=()=>{
-      const m=S.myTeam.members?.find(m=>m.id===btn.dataset.editMember);
-      if(m){S.editMemberId=m.id;S.editMemberName=m.name;S.editMemberNo=String(m.no||"");render();}
-    };
+    btn.onclick=()=>{const m=S.myTeam.members?.find(m=>m.id===btn.dataset.editMember);if(m){S.editMemberId=m.id;S.editMemberName=m.name;S.editMemberNo=String(m.no||"");render();}};
   });
   document.getElementById("save-member-edit")?.addEventListener("click",saveMemberEdit);
   document.getElementById("cancel-member-edit")?.addEventListener("click",()=>{S.editMemberId=null;render();});
@@ -689,7 +719,7 @@ function bindSettings(){
   document.getElementById("edit-mname")?.addEventListener("input",e=>S.editMemberName=e.target.value);
   document.querySelectorAll("[data-rm-member]").forEach(btn=>{btn.onclick=()=>removeMember(btn.dataset.rmMember);});
 
-  // 식당 관리
+  // 식당
   document.getElementById("inp-remoji")?.addEventListener("input",e=>S.newRestaurantEmoji=e.target.value);
   document.getElementById("inp-rname")?.addEventListener("input",e=>S.newRestaurantName=e.target.value);
   document.getElementById("inp-rcat")?.addEventListener("input",e=>S.newRestaurantCategory=e.target.value);
@@ -698,10 +728,7 @@ function bindSettings(){
     btn.onclick=()=>{S.expandedRestaurantId=S.expandedRestaurantId===btn.dataset.toggleR?null:btn.dataset.toggleR;render();};
   });
   document.querySelectorAll("[data-edit-r]").forEach(btn=>{
-    btn.onclick=()=>{
-      const r=S.restaurants.find(r=>r.docId===btn.dataset.editR);
-      if(r){S.editRestaurantId=r.docId;S.editRestaurantName=r.name;S.editRestaurantEmoji=r.emoji;S.editRestaurantCategory=r.category;render();}
-    };
+    btn.onclick=()=>{const r=S.restaurants.find(r=>r.docId===btn.dataset.editR);if(r){S.editRestaurantId=r.docId;S.editRestaurantName=r.name;S.editRestaurantEmoji=r.emoji;S.editRestaurantCategory=r.category;render();}};
   });
   document.getElementById("edit-remoji")?.addEventListener("input",e=>S.editRestaurantEmoji=e.target.value);
   document.getElementById("edit-rname")?.addEventListener("input",e=>S.editRestaurantName=e.target.value);
@@ -712,7 +739,7 @@ function bindSettings(){
   document.getElementById("cancel-r-edit")?.addEventListener("click",()=>{S.editRestaurantId=null;render();});
   document.querySelectorAll("[data-rm-r]").forEach(btn=>{btn.onclick=()=>removeRestaurant(btn.dataset.rmR);});
 
-  // 메뉴 관리
+  // 메뉴
   document.getElementById("inp-mname")?.addEventListener("input",e=>S.newMenuName=e.target.value);
   document.getElementById("inp-mprice")?.addEventListener("input",e=>S.newMenuPrice=e.target.value);
   document.querySelectorAll("[data-add-menu]").forEach(btn=>{
