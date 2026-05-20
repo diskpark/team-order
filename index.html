@@ -313,9 +313,12 @@ function renderMain(){
         <div><div style="font-size:9px;color:#5050a0;letter-spacing:2px">TEAM MEAL</div><div style="font-size:15px;font-weight:900;color:#fff;line-height:1.2">${S.myTeam.name} 식사 주문</div></div>
       </div>
       <div style="display:flex;align-items:center;gap:6px">
-        <button id="live-btn" style="background:rgba(255,107,107,0.15);border:1px solid rgba(255,107,107,0.3);border-radius:20px;padding:4px 10px;font-size:11px;color:#ff9d9d;font-weight:700;display:flex;align-items:center;gap:4px">
-          <span style="width:5px;height:5px;border-radius:50%;background:#ff6b6b;display:inline-block;animation:pulse 1.5s infinite"></span>LIVE
-        </button>
+        <div style="display:flex;align-items:center;gap:5px">
+          <button id="live-btn" style="background:rgba(255,107,107,0.15);border:1px solid rgba(255,107,107,0.3);border-radius:20px;padding:4px 10px;font-size:11px;color:#ff9d9d;font-weight:700;display:flex;align-items:center;gap:4px">
+            <span style="width:5px;height:5px;border-radius:50%;background:#ff6b6b;display:inline-block;animation:pulse 1.5s infinite"></span>LIVE
+          </button>
+          <div style="font-size:10px;color:#505070;font-weight:600;letter-spacing:0.5px">v0.1</div>
+        </div>
         <div style="background:rgba(108,99,255,0.15);border:1px solid rgba(108,99,255,0.3);border-radius:20px;padding:3px 9px;font-size:11px;color:#9d97ff;font-weight:700">${myOrders.length}/${members.length}명</div>
         <button id="settings-btn" style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:10px;width:33px;height:33px;display:flex;align-items:center;justify-content:center;font-size:16px">⚙️</button>
       </div>
