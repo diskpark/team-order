@@ -520,44 +520,57 @@ function renderRestaurantPopup(){
     </div>`;
   }).join("");
 
-  return `<div style="position:fixed;inset:0;z-index:400;display:flex;align-items:center;justify-content:center;padding:20px">
-    <div id="popup-bg" style="position:absolute;inset:0;background:rgba(0,0,0,0.8);backdrop-filter:blur(8px)"></div>
-    <div style="position:relative;z-index:1;background:#13132a;border:1px solid rgba(255,255,255,0.12);border-radius:22px;width:100%;max-width:480px;max-height:88vh;display:flex;flex-direction:column;overflow:hidden;animation:popIn 0.2s ease">
-      <!-- 팝업 헤더 -->
-      <div style="padding:18px 18px 14px;border-bottom:1px solid rgba(255,255,255,0.08);flex-shrink:0;display:flex;align-items:center;justify-content:space-between">
-        <div style="font-size:17px;font-weight:900;color:#fff">${r.emoji} 식당 수정</div>
+  return `<div style="position:fixed;inset:0;z-index:400;display:flex;align-items:center;justify-content:center;padding:16px">
+    <div id="popup-bg" style="position:absolute;inset:0;background:rgba(0,0,0,0.82);backdrop-filter:blur(8px)"></div>
+    <div style="position:relative;z-index:1;background:#16162e;border:1px solid rgba(255,255,255,0.13);border-radius:20px;width:100%;max-width:440px;max-height:86vh;display:flex;flex-direction:column;overflow:hidden;animation:popIn 0.2s ease">
+
+      <!-- 헤더 -->
+      <div style="padding:15px 16px 12px;border-bottom:1px solid rgba(255,255,255,0.07);flex-shrink:0;display:flex;align-items:center;justify-content:space-between">
+        <div style="display:flex;align-items:center;gap:9px">
+          <span style="font-size:26px">${r.emoji}</span>
+          <div>
+            <div style="font-size:16px;font-weight:900;color:#fff">${r.name}</div>
+            <div style="font-size:11px;color:#5050a0">식당 수정</div>
+          </div>
+        </div>
         <button id="popup-close" style="background:rgba(255,255,255,0.07);border:none;border-radius:50%;width:32px;height:32px;color:#9090c0;font-size:15px;display:flex;align-items:center;justify-content:center">✕</button>
       </div>
-      <div style="overflow-y:auto;flex:1;padding:16px 18px 20px">
 
-        <!-- 식당 기본 정보 -->
-        <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:14px;padding:14px;margin-bottom:18px">
-          <div style="font-size:11px;color:#6060a0;font-weight:700;letter-spacing:1px;margin-bottom:10px">식당 정보</div>
-          <!-- 이미지 -->
-          <label id="popup-img-label" style="display:flex;align-items:center;gap:10px;background:rgba(255,255,255,0.04);border:1.5px dashed rgba(255,255,255,0.1);border-radius:10px;padding:10px 13px;cursor:pointer;margin-bottom:12px">
-            ${r.image?`<img src="${r.image}" style="width:48px;height:48px;object-fit:cover;border-radius:8px"><div><div style="font-size:13px;color:#9d97ff;font-weight:700">이미지 변경</div><div style="font-size:11px;color:#6060a0;margin-top:1px">클릭하여 변경</div></div>`:`<span style="font-size:28px">🖼</span><div><div style="font-size:13px;color:#9d97ff;font-weight:700">식단표 이미지 추가</div><div style="font-size:11px;color:#6060a0;margin-top:1px">클릭하여 업로드</div></div>`}
-          </label>
-          <input type="file" id="popup-img-input" accept="image/*" style="display:none"/>
-          <!-- 이름/이모지 -->
-          <div style="display:flex;gap:8px">
-            <input id="pop-emoji" value="${S.popupRestaurantEmoji}" style="width:52px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.13);border-radius:9px;padding:10px 8px;color:#e0e0f0;font-size:18px;outline:none;text-align:center"/>
-            <input id="pop-name" value="${S.popupRestaurantName}" placeholder="식당 이름" style="flex:1;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.13);border-radius:9px;padding:10px 12px;color:#e0e0f0;font-size:14px;outline:none"/>
-            <button id="pop-save-info" style="background:linear-gradient(135deg,#6c63ff,#9d97ff);border:none;border-radius:9px;padding:10px 16px;color:#fff;font-size:13px;font-weight:700;white-space:nowrap">저장</button>
+      <div style="overflow-y:auto;flex:1;padding:14px 15px 20px">
+
+        <!-- 식당명 수정 -->
+        <div style="margin-bottom:12px">
+          <div style="font-size:11px;color:#5050a0;font-weight:700;margin-bottom:7px">식당 이름</div>
+          <div style="display:flex;gap:7px;align-items:stretch">
+            <input id="pop-emoji" value="${S.popupRestaurantEmoji}" style="width:46px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.13);border-radius:9px;padding:0 4px;color:#e0e0f0;font-size:20px;outline:none;text-align:center;flex-shrink:0;height:42px"/>
+            <input id="pop-name" value="${S.popupRestaurantName}" placeholder="식당 이름" style="flex:1;height:42px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.13);border-radius:9px;padding:0 12px;color:#e0e0f0;font-size:14px;outline:none"/>
+            <button id="pop-save-info" style="height:42px;background:linear-gradient(135deg,#6c63ff,#9d97ff);border:none;border-radius:9px;padding:0 15px;color:#fff;font-size:13px;font-weight:700;white-space:nowrap;flex-shrink:0">저장</button>
           </div>
         </div>
 
+        <!-- 이미지 -->
+        <div style="margin-bottom:14px">
+          <div style="font-size:11px;color:#5050a0;font-weight:700;margin-bottom:7px">식단표 이미지</div>
+          <label id="popup-img-label" style="display:flex;align-items:center;gap:10px;background:rgba(255,255,255,0.04);border:1.5px dashed rgba(255,255,255,0.1);border-radius:10px;padding:10px 13px;cursor:pointer">
+            ${r.image
+              ? `<img src="${r.image}" style="width:42px;height:42px;object-fit:cover;border-radius:7px;flex-shrink:0"/><span style="font-size:13px;color:#9d97ff">이미지 변경 (클릭)</span>`
+              : `<span style="font-size:20px">🖼</span><span style="font-size:13px;color:#606080">이미지 추가 (클릭)</span>`
+            }
+          </label>
+          <input type="file" id="popup-img-input" accept="image/*" style="display:none"/>
+        </div>
+
         <!-- 메뉴 목록 -->
-        <div>
-          <div style="font-size:11px;color:#6060a0;font-weight:700;letter-spacing:1px;margin-bottom:10px">메뉴 목록 (${(r.menus||[]).length}개)</div>
-          ${menuRows||`<div style="font-size:13px;color:#404060;text-align:center;padding:16px">메뉴가 없습니다.</div>`}
-          <!-- 메뉴 추가 -->
-          <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:12px;margin-top:8px">
-            <div style="font-size:11px;color:#6060a0;margin-bottom:8px">메뉴 추가</div>
-            <div style="display:flex;gap:7px">
-              <input id="pop-new-mname" placeholder="메뉴 이름" value="${S.popupNewMenuName}" style="flex:2;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.13);border-radius:8px;padding:9px 10px;color:#e0e0f0;font-size:13px;outline:none"/>
-              <input id="pop-new-mprice" placeholder="가격" type="number" value="${S.popupNewMenuPrice}" style="flex:1;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.13);border-radius:8px;padding:9px 8px;color:#e0e0f0;font-size:13px;outline:none"/>
-              <button id="pop-add-menu" style="background:linear-gradient(135deg,#6c63ff,#9d97ff);border:none;border-radius:8px;padding:9px 14px;color:#fff;font-size:13px;font-weight:700;white-space:nowrap">+ 추가</button>
-            </div>
+        <div style="font-size:11px;color:#5050a0;font-weight:700;margin-bottom:8px">메뉴 목록 · ${(r.menus||[]).length}개</div>
+        ${menuRows||`<div style="font-size:13px;color:#404060;text-align:center;padding:10px 0 14px">메뉴가 없습니다.</div>`}
+
+        <!-- 메뉴 추가 -->
+        <div style="background:rgba(108,99,255,0.07);border:1px solid rgba(108,99,255,0.2);border-radius:11px;padding:11px;margin-top:8px">
+          <div style="font-size:11px;color:#7070b0;margin-bottom:8px">+ 메뉴 추가</div>
+          <div style="display:flex;gap:6px;align-items:stretch">
+            <input id="pop-new-mname" placeholder="메뉴 이름" value="${S.popupNewMenuName}" style="flex:2;height:40px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.13);border-radius:8px;padding:0 10px;color:#e0e0f0;font-size:13px;outline:none"/>
+            <input id="pop-new-mprice" placeholder="가격" type="number" value="${S.popupNewMenuPrice}" style="width:78px;height:40px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.13);border-radius:8px;padding:0 8px;color:#e0e0f0;font-size:13px;outline:none;flex-shrink:0"/>
+            <button id="pop-add-menu" style="height:40px;background:linear-gradient(135deg,#6c63ff,#9d97ff);border:none;border-radius:8px;padding:0 13px;color:#fff;font-size:13px;font-weight:700;white-space:nowrap;flex-shrink:0">추가</button>
           </div>
         </div>
       </div>
