@@ -23,7 +23,7 @@ input{font-family:inherit;}
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, setDoc, writeBatch, query, where, getDocs } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-const VERSION = "v0.6";
+const VERSION = "v0.7";
 
 const firebaseConfig = {
   apiKey: "AIzaSyAQzhhO8NbhvUkNOjnjvVJgNNN4vx8KRXU",
@@ -246,32 +246,46 @@ async function saveRestaurantImage(r,base64){
 }
 
 // ── SMS 전송 ──────────────────────────────────────────────────────
-function sendSMS(restaurant){
-  const rOrders=S.allOrders.filter(o=>o.restaurant===restaurant.name);
-  if(rOrders.length===0){showToast("주문이 없습니다");return;}
-
+function buildSMSBody(restaurant, orders){
+  const teamName = S.myTeam?.name || "";
   // 메뉴별 집계
   const menuCount={};
-  rOrders.forEach(o=>{
+  orders.forEach(o=>{
     if(!menuCount[o.menu]) menuCount[o.menu]={name:o.menu,price:o.price,count:0};
     menuCount[o.menu].count++;
   });
-  const total=rOrders.reduce((s,o)=>s+o.price,0);
-  const lines=Object.values(menuCount).map(m=>`${m.name} x${m.count} = ${fmt(m.count*m.price)}`);
-  const body=`[식사 주문]\n${restaurant.emoji} ${restaurant.name}\n\n${lines.join("\n")}\n\n총 ${rOrders.length}명 / 합계 ${fmt(total)}`;
+  const total=orders.reduce((s,o)=>s+o.price,0);
+  const menuLines=Object.values(menuCount).map(m=>`• ${m.name} ${m.count}개 = ${fmt(m.count*m.price)}`);
+  return [
+    `안녕하세요, ${teamName} 입니다 :)`,
+    ``,
+    `[${restaurant.emoji} ${restaurant.name} 주문]`,
+    ``,
+    ...menuLines,
+    ``,
+    `총 ${orders.length}명 / 합계 ${fmt(total)}`,
+    ``,
+    `감사합니다!`
+  ].join("\n");
+}
 
-  const phone=(restaurant.phone||"").replace(/[^0-9]/g,"");
+function sendSMS(restaurantName){
+  const rData=S.restaurants.find(r=>r.name===restaurantName);
+  const rOrders=S.allOrders.filter(o=>o.team===S.myTeam?.name&&o.restaurant===restaurantName);
+  if(rOrders.length===0){showToast("주문이 없습니다");return;}
+  const body=buildSMSBody(rData||{name:restaurantName,emoji:"🍽"},rOrders);
+  const phone=(rData?.phone||"").replace(/[^0-9]/g,"");
   if(phone){
     window.location.href=`sms:${phone}?body=${encodeURIComponent(body)}`;
   } else {
-    // 전화번호 없으면 내용만 복사
     navigator.clipboard?.writeText(body);
-    showToast("📋 전화번호 없음 - 주문내용 복사됨");
+    showToast("📋 전화번호 없음 — 내용 복사됨");
   }
 }
 
-function callRestaurant(restaurant){
-  const phone=(restaurant.phone||"").replace(/[^0-9]/g,"");
+function callRestaurant(restaurantName){
+  const rData=S.restaurants.find(r=>r.name===restaurantName);
+  const phone=(rData?.phone||"").replace(/[^0-9]/g,"");
   if(phone) window.location.href=`tel:${phone}`;
   else showToast("⚠️ 식당 전화번호를 먼저 등록해주세요");
 }
@@ -356,19 +370,58 @@ function renderMain(){
   if(myOrders.length>0){
     const groups={};
     myOrders.forEach(o=>{if(!groups[o.restaurant])groups[o.restaurant]={name:o.restaurant,emoji:o.restaurantEmoji,items:[]};groups[o.restaurant].items.push(o);});
+    const groupsHTML=Object.values(groups).map(g=>{
+      const rData=S.restaurants.find(r=>r.name===g.name);
+      const hasPhone=!!(rData?.phone);
+      // 메뉴별 집계
+      const menuCount={};
+      g.items.forEach(o=>{if(!menuCount[o.menu])menuCount[o.menu]={name:o.menu,price:o.price,count:0};menuCount[o.menu].count++;});
+      return `<div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:14px;padding:13px 14px;margin-bottom:10px">
+        <!-- 식당 헤더 -->
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <div style="display:flex;align-items:center;gap:7px">
+            <span style="font-size:20px">${g.emoji}</span>
+            <div>
+              <div style="font-size:14px;font-weight:800;color:#fff">${g.name}</div>
+              <div style="font-size:11px;color:#5050a0">${g.items.length}명 주문</div>
+            </div>
+          </div>
+          <div style="display:flex;gap:6px">
+            <button data-sms-main="${g.name}" style="background:rgba(60,200,120,0.15);border:1px solid rgba(60,200,120,0.3);border-radius:20px;padding:6px 13px;font-size:12px;color:#60c880;font-weight:700">📱 문자</button>
+            ${hasPhone?`<button data-call-main="${g.name}" style="background:rgba(108,99,255,0.15);border:1px solid rgba(108,99,255,0.3);border-radius:20px;padding:6px 13px;font-size:12px;color:#9d97ff;font-weight:700">📞 전화</button>`:""}
+          </div>
+        </div>
+        <!-- 주문자 목록 -->
+        ${g.items.map(o=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid rgba(255,255,255,0.05)">
+          <div style="display:flex;align-items:center;gap:8px">
+            <div style="width:6px;height:6px;border-radius:50%;background:#6c63ff;flex-shrink:0"></div>
+            <span style="font-size:13px;font-weight:700;color:#e0e0f0">${o.member}</span>
+            <span style="font-size:12px;color:#6060a0">${o.menu}</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:12px;color:#9d97ff;font-weight:700">${fmt(o.price)}</span>
+            <button data-delete="${o.docId}" style="background:none;border:none;color:#ff6060;font-size:15px;line-height:1;padding:0">×</button>
+          </div>
+        </div>`).join("")}
+        <!-- 메뉴별 집계 -->
+        <div style="margin-top:9px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.06)">
+          ${Object.values(menuCount).map(m=>`<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
+            <span style="color:#9090b0">${m.name} × ${m.count}</span>
+            <span style="color:#9d97ff;font-weight:700">${fmt(m.count*m.price)}</span>
+          </div>`).join("")}
+          <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:800;margin-top:5px;padding-top:5px;border-top:1px solid rgba(255,255,255,0.06)">
+            <span style="color:#fff">소계</span>
+            <span style="color:#9d97ff">${fmt(g.items.reduce((s,o)=>s+o.price,0))}</span>
+          </div>
+        </div>
+      </div>`;
+    }).join("");
+
     summaryHTML=`
       <div style="margin-top:18px;padding-top:16px;border-top:1px solid rgba(255,255,255,0.07)">
         <div style="font-size:11px;color:#5050a0;letter-spacing:1px;margin-bottom:10px;font-weight:700">📋 주문 현황 · ${myOrders.length}건</div>
-        ${Object.values(groups).map(g=>`
-          <div style="margin-bottom:12px">
-            <div style="font-size:12px;font-weight:700;color:#9d97ff;margin-bottom:5px">${g.emoji} ${g.name} <span style="font-size:10px;background:rgba(108,99,255,0.2);border-radius:20px;padding:2px 6px">${g.items.length}건</span></div>
-            ${g.items.map(o=>`<div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.07);border-radius:10px;padding:9px 12px;display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-              <div><div style="font-size:13px;font-weight:700;color:#e0e0f0">${o.member}</div><div style="font-size:11px;color:#6060a0;margin-top:1px">${o.menu}</div></div>
-              <div style="display:flex;align-items:center;gap:8px"><span style="font-size:12px;color:#9d97ff;font-weight:700">${fmt(o.price)}</span><button data-delete="${o.docId}" style="background:none;border:none;color:#ff6060;font-size:15px;line-height:1;padding:0">×</button></div>
-            </div>`).join("")}
-            <div style="text-align:right;font-size:11px;color:#6060a0;margin-top:2px">소계: <strong style="color:#9d97ff">${fmt(g.items.reduce((s,o)=>s+o.price,0))}</strong></div>
-          </div>`).join("")}
-        <div style="border-top:1px solid rgba(255,255,255,0.07);padding-top:10px;text-align:right;font-size:14px;font-weight:800;color:#fff">총 합계: <span style="color:#9d97ff">${fmt(myOrders.reduce((s,o)=>s+o.price,0))}</span></div>
+        ${groupsHTML}
+        <div style="text-align:right;font-size:14px;font-weight:800;color:#fff;margin-top:4px">총 합계: <span style="color:#9d97ff">${fmt(myOrders.reduce((s,o)=>s+o.price,0))}</span></div>
       </div>`;
   }
 
@@ -666,6 +719,9 @@ function bindMain(){
     };
   });
   document.querySelectorAll("[data-delete]").forEach(btn=>{btn.onclick=async()=>{await deleteDoc(doc(db,"orders",btn.dataset.delete));};});
+  // 현황판 문자/전화 버튼
+  document.querySelectorAll("[data-sms-main]").forEach(btn=>{btn.onclick=()=>sendSMS(btn.dataset.smsMain);});
+  document.querySelectorAll("[data-call-main]").forEach(btn=>{btn.onclick=()=>callRestaurant(btn.dataset.callMain);});
 }
 
 function bindMenuSheet(){
