@@ -21,10 +21,9 @@ input{font-family:inherit;}
 <div id="app"></div>
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, setDoc, writeBatch, query, where, getDocs, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, setDoc, writeBatch, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const VERSION = "v0.9";
-
 const firebaseConfig = {
   apiKey: "AIzaSyAQzhhO8NbhvUkNOjnjvVJgNNN4vx8KRXU",
   authDomain: "team-order-1cfb0.firebaseapp.com",
@@ -37,21 +36,6 @@ const fbApp = initializeApp(firebaseConfig);
 const db = getFirestore(fbApp);
 
 const todayKey = () => new Date().toISOString().slice(0,10);
-
-// 2시간 초과 주문 자동 삭제
-async function cleanupExpiredOrders(orders){
-  const now = Date.now();
-  const TWO_HOURS = 2 * 60 * 60 * 1000;
-  const expired = orders.filter(o => {
-    if(!o.timestamp) return false;
-    return (now - o.timestamp) > TWO_HOURS;
-  });
-  if(expired.length === 0) return;
-  const batch = writeBatch(db);
-  expired.forEach(o => batch.delete(doc(db,"orders",o.docId)));
-  await batch.commit();
-  console.log(`🗑 ${expired.length}건 자동 만료 삭제`);
-}
 const fmt = p => Number(p).toLocaleString()+"원";
 const uid = () => `${Date.now()}_${Math.random().toString(36).slice(2,7)}`;
 const makeMembers = names => names.map((n,i)=>({id:uid(),no:i+1,name:n}));
@@ -68,7 +52,6 @@ const DEFAULT_TEAMS = [
   {id:"t10",name:"10조",members:makeMembers(["정조연","강영훈","이동혁","홍장운","최현재","문윤택","박재정","백경록","손동휘","박형진","차현민","장진호","안병훈","최규호","장경남","서창수","박웅일","윤영하","김현석","정태경"])},
   {id:"t11",name:"11조",members:makeMembers(["신대진","박상진","최성훈","김동환","조대활","박영안","김태효","최준일","김동은","강대웅","홍광암","김태영","정영석","채원옥","이정선","최정주","임시영","박문찬"])},
 ];
-
 const DEFAULT_RESTAURANTS = [
   {id:"r1",name:"한솥도시락",emoji:"🍱",phoneSMS:"",phoneCall:"",image:null,menus:[{id:"m1",name:"불고기 도시락",price:7500},{id:"m2",name:"제육볶음 도시락",price:7000},{id:"m3",name:"치킨마요 도시락",price:6500}]},
   {id:"r2",name:"맥도날드",emoji:"🍔",phoneSMS:"",phoneCall:"",image:null,menus:[{id:"m1",name:"빅맥 세트",price:8500},{id:"m2",name:"상하이버거 세트",price:8000},{id:"m3",name:"맥스파이시 세트",price:8200}]},
@@ -82,107 +65,71 @@ let S = {
   screen:"loading",
   myTeamDocId: localStorage.getItem("myTeamDocId")||null,
   myTeam:null, teams:[], restaurants:[], allOrders:[],
-  tab:"order",
+  restaurantOrder:[], // 현재 조의 식당 순서 (docId 배열)
   selectedRestaurantId:null,
-  // 메뉴시트: 팀원 + 선택된 메뉴 (팝업 재오픈 없이)
   menuSheet:null, selectedMenu:null,
   liveBoard:false, settings:false, settingsTab:"teams",
   toast:null, toastTimer:null,
   dataInitialized:false,
+  loadedTeams:false, loadedRestaurants:false,
   // 팀원 편집
   newMemberName:"", newMemberNo:"",
   editMemberId:null, editMemberName:"", editMemberNo:"",
   // 식당 추가
   newRestaurantName:"", newRestaurantEmoji:"🍽",
-  // 식당 편집 팝업
+  // 식당 팝업
   restaurantPopup:null,
-  popupRestaurantName:"", popupRestaurantEmoji:"", popupRestaurantPhone:"",
-  popupNewMenuName:"", popupNewMenuPrice:"",
+  popupRestaurantName:"", popupRestaurantEmoji:"",
   popupRestaurantPhoneSMS:"", popupRestaurantPhoneCall:"",
-  teamRestaurantOrder:[], // 현재 조의 식당 순서 (docId 배열)
+  popupNewMenuName:"", popupNewMenuPrice:"",
   popupEditMenuId:null, popupEditMenuName:"", popupEditMenuPrice:"",
 };
+
+// ── 초기화 체크 ───────────────────────────────────────────────────
+function checkReady(){
+  if(!S.loadedTeams || !S.loadedRestaurants) return;
+  if(S.screen === "loading"){
+    if(S.myTeamDocId){
+      const f = S.teams.find(t=>t.docId===S.myTeamDocId);
+      if(f){ S.myTeam=f; S.screen="main"; loadRestaurantOrder().then(()=>render()); return; }
+    }
+    S.screen = "teamSelect";
+  }
+  render();
+}
 
 // ── Firebase ──────────────────────────────────────────────────────
 function initFirebase(){
   onSnapshot(collection(db,"teams"), snap=>{
     if(snap.empty && !S.dataInitialized){
-      S.dataInitialized=true; saveDefaultData();
-    } else {
-      S.teams = snap.docs.map(d=>({...d.data(),docId:d.id}));
-      S.teams.sort((a,b)=>{const na=parseInt(a.name),nb=parseInt(b.name);return isNaN(na)||isNaN(nb)?a.name.localeCompare(b.name,'ko'):na-nb;});
-      if(S.myTeamDocId && !S.myTeam){
-        const f=S.teams.find(t=>t.docId===S.myTeamDocId);
-        if(f){S.myTeam=f;S.screen="main";loadRestaurantOrder().then(()=>render());}else S.screen="teamSelect";
-      } else if(S.myTeam){
-        S.myTeam=S.teams.find(t=>t.docId===S.myTeam.docId)||S.myTeam;
-      } else if(S.screen==="loading") S.screen="teamSelect";
-      render();
+      S.dataInitialized=true; saveDefaultData(); return;
     }
+    S.teams = snap.docs.map(d=>({...d.data(),docId:d.id}));
+    S.teams.sort((a,b)=>{const na=parseInt(a.name),nb=parseInt(b.name);return isNaN(na)||isNaN(nb)?a.name.localeCompare(b.name,'ko'):na-nb;});
+    if(S.myTeam) S.myTeam = S.teams.find(t=>t.docId===S.myTeam.docId)||S.myTeam;
+    S.loadedTeams = true;
+    checkReady();
   });
   onSnapshot(collection(db,"restaurants"), snap=>{
-    S.restaurants=snap.docs.map(d=>({...d.data(),docId:d.id}));
-    if(!S.selectedRestaurantId && S.restaurants.length>0) S.selectedRestaurantId=S.restaurants[0].docId;
-    render();
+    S.restaurants = snap.docs.map(d=>({...d.data(),docId:d.id}));
+    if(!S.selectedRestaurantId && S.restaurants.length>0)
+      S.selectedRestaurantId = getOrderedRestaurants()[0]?.docId || S.restaurants[0].docId;
+    S.loadedRestaurants = true;
+    checkReady();
   });
   onSnapshot(collection(db,"orders"), snap=>{
-    const today = todayKey();
-    const now = Date.now();
-    const TWO_HOURS = 2 * 60 * 60 * 1000;
-    const allDocs = snap.docs.map(d=>({...d.data(),docId:d.id}));
-    // 오늘 날짜 + 2시간 이내만 표시
-    S.allOrders = allDocs.filter(o => {
-      if(o.date !== today) return false;
-      if(o.timestamp && (now - o.timestamp) > TWO_HOURS) return false;
-      return true;
-    });
-    // 백그라운드에서 만료된 것들 삭제 (오늘 것 중 2시간 초과 + 어제 것)
-    cleanupExpiredOrders(allDocs);
-    render();
+    const today=todayKey(); const now=Date.now(); const TWO_H=2*60*60*1000;
+    const all=snap.docs.map(d=>({...d.data(),docId:d.id}));
+    S.allOrders = all.filter(o=>o.date===today && !(o.timestamp&&(now-o.timestamp)>TWO_H));
+    // cleanup expired
+    const expired=all.filter(o=>o.date!==today||(o.timestamp&&(now-o.timestamp)>TWO_H));
+    if(expired.length>0){
+      const b=writeBatch(db);
+      expired.forEach(o=>b.delete(doc(db,"orders",o.docId)));
+      b.commit().catch(()=>{});
+    }
+    if(S.screen==="main") render();
   });
-}
-
-// ── 식당 순서 (조별) ─────────────────────────────────────────────
-function getOrderedRestaurants(){
-  if(!S.teamRestaurantOrder || S.teamRestaurantOrder.length===0) return S.restaurants;
-  const ordered = [];
-  S.teamRestaurantOrder.forEach(id=>{
-    const r=S.restaurants.find(r=>r.docId===id);
-    if(r) ordered.push(r);
-  });
-  // 순서에 없는 식당은 뒤에 추가
-  S.restaurants.forEach(r=>{
-    if(!S.teamRestaurantOrder.includes(r.docId)) ordered.push(r);
-  });
-  return ordered;
-}
-
-async function saveRestaurantOrder(order){
-  if(!S.myTeam) return;
-  await setDoc(doc(db,"teamRestaurantOrder",S.myTeam.docId),{order, teamId:S.myTeam.docId});
-  S.teamRestaurantOrder = order;
-}
-
-async function loadRestaurantOrder(){
-  if(!S.myTeam) return;
-  try{
-    const snap = await getDocs(query(collection(db,"teamRestaurantOrder")));
-    const mine = snap.docs.find(d=>d.id===S.myTeam.docId);
-    if(mine) S.teamRestaurantOrder = mine.data().order||[];
-    else S.teamRestaurantOrder = [];
-  }catch(e){S.teamRestaurantOrder=[];}
-}
-
-async function moveRestaurant(docId, dir){
-  const list = getOrderedRestaurants().map(r=>r.docId);
-  const idx = list.indexOf(docId);
-  if(idx===-1) return;
-  if(dir==="up" && idx===0) return;
-  if(dir==="down" && idx===list.length-1) return;
-  const swap = dir==="up" ? idx-1 : idx+1;
-  [list[idx], list[swap]] = [list[swap], list[idx]];
-  await saveRestaurantOrder(list);
-  render();
 }
 
 async function saveDefaultData(){
@@ -192,6 +139,37 @@ async function saveDefaultData(){
   await batch.commit();
 }
 
+// ── 식당 순서 ─────────────────────────────────────────────────────
+function getOrderedRestaurants(){
+  if(!S.restaurantOrder || S.restaurantOrder.length===0) return [...S.restaurants];
+  const ordered=[];
+  S.restaurantOrder.forEach(id=>{const r=S.restaurants.find(r=>r.docId===id);if(r)ordered.push(r);});
+  S.restaurants.forEach(r=>{if(!S.restaurantOrder.includes(r.docId))ordered.push(r);});
+  return ordered;
+}
+async function loadRestaurantOrder(){
+  if(!S.myTeam) return;
+  try{
+    const d=await getDoc(doc(db,"teamRestaurantOrder",S.myTeam.docId));
+    S.restaurantOrder = d.exists()?(d.data().order||[]):[];
+  }catch(e){S.restaurantOrder=[];}
+}
+async function saveRestaurantOrder(order){
+  if(!S.myTeam) return;
+  S.restaurantOrder=order;
+  await setDoc(doc(db,"teamRestaurantOrder",S.myTeam.docId),{order,teamId:S.myTeam.docId});
+}
+async function moveRestaurant(docId,dir){
+  const list=getOrderedRestaurants().map(r=>r.docId);
+  const idx=list.indexOf(docId); if(idx===-1) return;
+  if(dir==="up"&&idx===0) return;
+  if(dir==="down"&&idx===list.length-1) return;
+  const swap=dir==="up"?idx-1:idx+1;
+  [list[idx],list[swap]]=[list[swap],list[idx]];
+  await saveRestaurantOrder(list); render();
+}
+
+// ── 토스트 ────────────────────────────────────────────────────────
 function showToast(msg){
   if(S.toastTimer) clearTimeout(S.toastTimer);
   S.toast=msg;
@@ -204,7 +182,7 @@ function getMyOrder(memberName){ return S.allOrders.find(o=>o.team===S.myTeam?.n
 function countByR(rName){ return S.allOrders.filter(o=>o.restaurant===rName).length; }
 function getSelR(){ return S.restaurants.find(r=>r.docId===S.selectedRestaurantId); }
 
-async function submitOrder(member, menu){
+async function submitOrder(member,menu){
   const r=getSelR(); if(!r||!member||!menu) return;
   const order={team:S.myTeam.name,member:member.name,restaurant:r.name,restaurantEmoji:r.emoji,menu:menu.name,price:menu.price,at:new Date().toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit"}),date:todayKey(),timestamp:Date.now()};
   try{
@@ -216,14 +194,35 @@ async function submitOrder(member, menu){
   }catch(e){showToast("❌ 저장 실패");}
 }
 
-// 내 조 전체 주문 초기화
 async function resetMyOrders(){
   if(!confirm(`${S.myTeam.name} 전체 주문을 초기화할까요?`)) return;
-  const mine=S.allOrders.filter(o=>o.team===S.myTeam.name);
-  const batch=writeBatch(db);
-  mine.forEach(o=>batch.delete(doc(db,"orders",o.docId)));
-  await batch.commit();
-  showToast("🗑 초기화 완료");
+  const b=writeBatch(db);
+  S.allOrders.filter(o=>o.team===S.myTeam.name).forEach(o=>b.delete(doc(db,"orders",o.docId)));
+  await b.commit(); showToast("🗑 초기화 완료");
+}
+
+// ── SMS ───────────────────────────────────────────────────────────
+function buildSMSBody(rData,orders){
+  const menuCount={};
+  orders.forEach(o=>{if(!menuCount[o.menu])menuCount[o.menu]={name:o.menu,price:o.price,count:0};menuCount[o.menu].count++;});
+  const total=orders.reduce((s,o)=>s+o.price,0);
+  const lines=Object.values(menuCount).map(m=>`• ${m.name} ${m.count}개 = ${fmt(m.count*m.price)}`);
+  return [`안녕하세요, ${S.myTeam?.name||""} 입니다 :)`,``,`[${rData.emoji||"🍽"} ${rData.name} 주문]`,``,...lines,``,`총 ${orders.length}명 / 합계 ${fmt(total)}`,``,`감사합니다!`].join("\n");
+}
+function sendSMS(restaurantName){
+  const rData=S.restaurants.find(r=>r.name===restaurantName);
+  const rOrders=S.allOrders.filter(o=>o.team===S.myTeam?.name&&o.restaurant===restaurantName);
+  if(rOrders.length===0){showToast("주문이 없습니다");return;}
+  const body=buildSMSBody(rData||{name:restaurantName,emoji:"🍽"},rOrders);
+  const phone=(rData?.phoneSMS||"").replace(/[^0-9]/g,"");
+  if(phone) window.location.href=`sms:${phone}?body=${encodeURIComponent(body)}`;
+  else{ navigator.clipboard?.writeText(body); showToast("📋 문자번호 없음 — 내용 복사됨"); }
+}
+function callRestaurant(restaurantName){
+  const rData=S.restaurants.find(r=>r.name===restaurantName);
+  const phone=(rData?.phoneCall||rData?.phoneSMS||"").replace(/[^0-9]/g,"");
+  if(phone) window.location.href=`tel:${phone}`;
+  else showToast("⚠️ 전화번호를 먼저 등록해주세요");
 }
 
 // ── 팀원 CRUD ─────────────────────────────────────────────────────
@@ -256,26 +255,24 @@ async function addRestaurant(){
   await setDoc(doc(db,"restaurants",id),{id,name,emoji:S.newRestaurantEmoji||"🍽",phoneSMS:"",phoneCall:"",image:null,menus:[]});
   S.newRestaurantName=""; S.newRestaurantEmoji="🍽"; showToast(`✅ ${name} 추가`);
 }
-async function removeRestaurant(docId, name){
-  const first = confirm(`⚠️ "${name}" 식당을 삭제하시겠습니까?\n\n삭제하면 복구할 수 없습니다.`);
+async function removeRestaurant(docId,name){
+  const first=confirm(`⚠️ "${name}" 식당을 삭제하시겠습니까?\n\n삭제하면 복구할 수 없습니다.`);
   if(!first) return;
-  const second = confirm(`🚨 정말로 "${name}"을 삭제합니다.\n메뉴 데이터도 모두 사라집니다.\n\n최종 확인: 삭제하시겠습니까?`);
+  const second=confirm(`🚨 정말로 "${name}"을 삭제합니다.\n메뉴 데이터도 모두 사라집니다.\n\n최종 확인: 삭제하시겠습니까?`);
   if(!second) return;
   await deleteDoc(doc(db,"restaurants",docId));
-  // 순서에서도 제거
-  const newOrder = S.teamRestaurantOrder.filter(id=>id!==docId);
-  if(newOrder.length !== S.teamRestaurantOrder.length) await saveRestaurantOrder(newOrder);
+  const newOrder=S.restaurantOrder.filter(id=>id!==docId);
+  if(newOrder.length!==S.restaurantOrder.length) await saveRestaurantOrder(newOrder);
   showToast(`🗑 ${name} 삭제됨`);
 }
 
-// ── 식당 팝업 ─────────────────────────────────────────────────────
+// ── 식당 팝업 CRUD ────────────────────────────────────────────────
 async function savePopupInfo(){
   const r=S.restaurants.find(r=>r.docId===S.restaurantPopup); if(!r) return;
   const name=S.popupRestaurantName.trim(); if(!name) return;
   await setDoc(doc(db,"restaurants",r.docId),{...r,name,emoji:S.popupRestaurantEmoji||r.emoji,phoneSMS:S.popupRestaurantPhoneSMS||"",phoneCall:S.popupRestaurantPhoneCall||""});
   showToast("✅ 저장됨");
 }
-
 async function addPopupMenu(){
   const r=S.restaurants.find(r=>r.docId===S.restaurantPopup); if(!r) return;
   const name=S.popupNewMenuName.trim(); const price=parseInt(S.popupNewMenuPrice);
@@ -298,55 +295,11 @@ async function saveRestaurantImage(r,base64){
   await setDoc(doc(db,"restaurants",r.docId),{...r,image:base64}); showToast("✅ 이미지 저장됨");
 }
 
-// ── SMS 전송 ──────────────────────────────────────────────────────
-function buildSMSBody(restaurant, orders){
-  const teamName = S.myTeam?.name || "";
-  // 메뉴별 집계
-  const menuCount={};
-  orders.forEach(o=>{
-    if(!menuCount[o.menu]) menuCount[o.menu]={name:o.menu,price:o.price,count:0};
-    menuCount[o.menu].count++;
-  });
-  const total=orders.reduce((s,o)=>s+o.price,0);
-  const menuLines=Object.values(menuCount).map(m=>`• ${m.name} ${m.count}개 = ${fmt(m.count*m.price)}`);
-  return [
-    `안녕하세요, ${teamName} 입니다 :)`,
-    ``,
-    `[${restaurant.emoji} ${restaurant.name} 주문]`,
-    ``,
-    ...menuLines,
-    ``,
-    `총 ${orders.length}명 / 합계 ${fmt(total)}`,
-    ``,
-    `감사합니다!`
-  ].join("\n");
-}
-
-function sendSMS(restaurantName){
-  const rData=S.restaurants.find(r=>r.name===restaurantName);
-  const rOrders=S.allOrders.filter(o=>o.team===S.myTeam?.name&&o.restaurant===restaurantName);
-  if(rOrders.length===0){showToast("주문이 없습니다");return;}
-  const body=buildSMSBody(rData||{name:restaurantName,emoji:"🍽"},rOrders);
-  const phone=(rData?.phoneSMS||"").replace(/[^0-9]/g,"");
-  if(phone){
-    window.location.href=`sms:${phone}?body=${encodeURIComponent(body)}`;
-  } else {
-    navigator.clipboard?.writeText(body);
-    showToast("📋 문자번호 없음 — 내용 복사됨");
-  }
-}
-
-function callRestaurant(restaurantName){
-  const rData=S.restaurants.find(r=>r.name===restaurantName);
-  const phone=(rData?.phoneCall||rData?.phoneSMS||"").replace(/[^0-9]/g,"");
-  if(phone) window.location.href=`tel:${phone}`;
-  else showToast("⚠️ 전화번호를 먼저 등록해주세요");
-}
-
 // ── 렌더 ─────────────────────────────────────────────────────────
 function render(){
   const app=document.getElementById("app");
-  if(S.screen==="loading"){app.innerHTML=renderLoading();return;}
+  if(!app) return;
+  if(S.screen==="loading"){app.innerHTML=`<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px"><div style="font-size:48px">🍽</div><div style="color:#6060a0;font-size:14px">연결 중...</div></div>`;return;}
   if(S.screen==="teamSelect"){app.innerHTML=renderTeamSelect();bindTeamSelect();return;}
   if(S.screen==="main"){
     app.innerHTML=renderMain();
@@ -356,10 +309,6 @@ function render(){
     if(S.settings) bindSettings();
     if(S.restaurantPopup) bindRestaurantPopup();
   }
-}
-
-function renderLoading(){
-  return `<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px"><div style="font-size:48px">🍽</div><div style="color:#6060a0;font-size:14px">연결 중...</div></div>`;
 }
 
 // ── 조 선택 ──────────────────────────────────────────────────────
@@ -382,20 +331,27 @@ function bindTeamSelect(){
     btn.onclick=()=>{
       const t=S.teams.find(t=>t.docId===btn.dataset.team);
       S.myTeam=t; S.myTeamDocId=t.docId; localStorage.setItem("myTeamDocId",t.docId);
+      S.restaurantOrder=[]; S.selectedRestaurantId=null;
       S.screen="main";
-      loadRestaurantOrder().then(()=>render());
+      loadRestaurantOrder().then(()=>{
+        if(!S.selectedRestaurantId){
+          const first=getOrderedRestaurants()[0];
+          if(first) S.selectedRestaurantId=first.docId;
+        }
+        render();
+      });
     };
   });
 }
 
-// ── 메인 ─────────────────────────────────────────────────────
+// ── 메인 ─────────────────────────────────────────────────────────
 function renderMain(){
   const myOrders=S.allOrders.filter(o=>o.team===S.myTeam.name);
   const selR=getSelR();
   const members=S.myTeam.members||[];
+  const orderedR=getOrderedRestaurants();
 
-  const orderedRestaurants = getOrderedRestaurants();
-  const rTabs=orderedRestaurants.map(r=>{
+  const rTabs=orderedR.map(r=>{
     const active=r.docId===S.selectedRestaurantId; const cnt=countByR(r.name);
     return `<button data-rtab="${r.docId}" style="flex-shrink:0;background:${active?"rgba(108,99,255,0.25)":"rgba(255,255,255,0.04)"};border:2px solid ${active?"rgba(108,99,255,0.8)":"rgba(255,255,255,0.08)"};border-radius:14px;padding:10px 12px;display:flex;flex-direction:column;align-items:center;gap:2px;color:${active?"#c4c0ff":"#606080"};position:relative;transition:all 0.18s;min-width:68px">
       <span style="font-size:22px">${r.emoji}</span>
@@ -410,17 +366,16 @@ function renderMain(){
     ${(selR.menus||[]).map(m=>`<span style="flex-shrink:0;font-size:11px;color:#9090b0;background:rgba(255,255,255,0.05);border-radius:20px;padding:3px 9px;white-space:nowrap">${m.name} <span style="color:#6c63ff;font-weight:700">${fmt(m.price)}</span></span>`).join("")}
   </div>`:"";
 
-  // 팀원 그리드
   const memberGrid=members.map(m=>{
     const order=getMyOrder(m.name); const done=!!order;
-    return `<button data-member="${m.id}" style="background:${done?"rgba(60,200,120,0.12)":"rgba(255,255,255,0.05)"};border:1.5px solid ${done?"rgba(60,200,120,0.4)":"rgba(255,255,255,0.09)"};border-radius:12px;padding:10px 4px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;transition:all 0.15s;width:100%;aspect-ratio:1;position:relative">
+    return `<button data-member="${m.id}" style="background:${done?"rgba(60,200,120,0.12)":"rgba(255,255,255,0.05)"};border:1.5px solid ${done?"rgba(60,200,120,0.4)":"rgba(255,255,255,0.09)"};border-radius:12px;padding:10px 4px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;transition:all 0.15s;width:100%;aspect-ratio:1">
       <div style="font-size:${done?16:13}px">${done?"✓":"👤"}</div>
       <div style="font-size:11px;font-weight:700;color:${done?"#60c880":"#d0d0e8"};text-align:center;line-height:1.2;word-break:keep-all;padding:0 2px">${m.name}</div>
       ${done?`<div style="font-size:9px;color:#50a870">${order.restaurantEmoji}</div>`:""}
     </button>`;
   }).join("");
 
-  // 현황 (팀원 아래)
+  // 현황
   let summaryHTML="";
   if(myOrders.length>0){
     const groups={};
@@ -428,25 +383,19 @@ function renderMain(){
     const groupsHTML=Object.values(groups).map(g=>{
       const rData=S.restaurants.find(r=>r.name===g.name);
       const hasPhone=!!(rData?.phoneCall||rData?.phoneSMS);
-      // 메뉴별 집계
       const menuCount={};
       g.items.forEach(o=>{if(!menuCount[o.menu])menuCount[o.menu]={name:o.menu,price:o.price,count:0};menuCount[o.menu].count++;});
       return `<div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:14px;padding:13px 14px;margin-bottom:10px">
-        <!-- 식당 헤더 -->
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
           <div style="display:flex;align-items:center;gap:7px">
             <span style="font-size:20px">${g.emoji}</span>
-            <div>
-              <div style="font-size:14px;font-weight:800;color:#fff">${g.name}</div>
-              <div style="font-size:11px;color:#5050a0">${g.items.length}명 주문</div>
-            </div>
+            <div><div style="font-size:14px;font-weight:800;color:#fff">${g.name}</div><div style="font-size:11px;color:#5050a0">${g.items.length}명 주문</div></div>
           </div>
           <div style="display:flex;gap:6px">
-            <button data-sms-main="${g.name}" style="background:rgba(60,200,120,0.15);border:1px solid rgba(60,200,120,0.3);border-radius:20px;padding:6px 13px;font-size:12px;color:#60c880;font-weight:700">📱 문자</button>
-            ${hasPhone?`<button data-call-main="${g.name}" style="background:rgba(108,99,255,0.15);border:1px solid rgba(108,99,255,0.3);border-radius:20px;padding:6px 13px;font-size:12px;color:#9d97ff;font-weight:700">📞 전화</button>`:""}
+            <button data-sms-main="${g.name}" style="background:rgba(60,200,120,0.15);border:1px solid rgba(60,200,120,0.3);border-radius:20px;padding:6px 12px;font-size:12px;color:#60c880;font-weight:700">📱 문자</button>
+            ${hasPhone?`<button data-call-main="${g.name}" style="background:rgba(108,99,255,0.15);border:1px solid rgba(108,99,255,0.3);border-radius:20px;padding:6px 12px;font-size:12px;color:#9d97ff;font-weight:700">📞 전화</button>`:""}
           </div>
         </div>
-        <!-- 주문자 목록 -->
         ${g.items.map(o=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid rgba(255,255,255,0.05)">
           <div style="display:flex;align-items:center;gap:8px">
             <div style="width:6px;height:6px;border-radius:50%;background:#6c63ff;flex-shrink:0"></div>
@@ -458,30 +407,22 @@ function renderMain(){
             <button data-delete="${o.docId}" style="background:none;border:none;color:#ff6060;font-size:15px;line-height:1;padding:0">×</button>
           </div>
         </div>`).join("")}
-        <!-- 메뉴별 집계 -->
-        <div style="margin-top:9px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.06)">
-          ${Object.values(menuCount).map(m=>`<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
-            <span style="color:#9090b0">${m.name} × ${m.count}</span>
-            <span style="color:#9d97ff;font-weight:700">${fmt(m.count*m.price)}</span>
-          </div>`).join("")}
+        <div style="margin-top:8px;padding-top:7px;border-top:1px solid rgba(255,255,255,0.06)">
+          ${Object.values(menuCount).map(m=>`<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:2px"><span style="color:#9090b0">${m.name} × ${m.count}</span><span style="color:#9d97ff;font-weight:700">${fmt(m.count*m.price)}</span></div>`).join("")}
           <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:800;margin-top:5px;padding-top:5px;border-top:1px solid rgba(255,255,255,0.06)">
-            <span style="color:#fff">소계</span>
-            <span style="color:#9d97ff">${fmt(g.items.reduce((s,o)=>s+o.price,0))}</span>
+            <span style="color:#fff">소계</span><span style="color:#9d97ff">${fmt(g.items.reduce((s,o)=>s+o.price,0))}</span>
           </div>
         </div>
       </div>`;
     }).join("");
-
-    summaryHTML=`
-      <div style="margin-top:18px;padding-top:16px;border-top:1px solid rgba(255,255,255,0.07)">
-        <div style="font-size:11px;color:#5050a0;letter-spacing:1px;margin-bottom:10px;font-weight:700">📋 주문 현황 · ${myOrders.length}건</div>
-        ${groupsHTML}
-        <div style="text-align:right;font-size:14px;font-weight:800;color:#fff;margin-top:4px">총 합계: <span style="color:#9d97ff">${fmt(myOrders.reduce((s,o)=>s+o.price,0))}</span></div>
-      </div>`;
+    summaryHTML=`<div style="margin-top:18px;padding-top:16px;border-top:1px solid rgba(255,255,255,0.07)">
+      <div style="font-size:11px;color:#5050a0;letter-spacing:1px;margin-bottom:10px;font-weight:700">📋 주문 현황 · ${myOrders.length}건</div>
+      ${groupsHTML}
+      <div style="text-align:right;font-size:14px;font-weight:800;color:#fff;margin-top:2px">총 합계: <span style="color:#9d97ff">${fmt(myOrders.reduce((s,o)=>s+o.price,0))}</span></div>
+    </div>`;
   }
 
-  return `
-  <div style="height:100vh;background:#0d0d1a;display:flex;flex-direction:column;overflow:hidden">
+  return `<div style="height:100vh;background:#0d0d1a;display:flex;flex-direction:column;overflow:hidden">
     <!-- 헤더 -->
     <div style="background:rgba(255,255,255,0.03);border-bottom:1px solid rgba(255,255,255,0.07);padding:11px 13px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0">
       <div style="display:flex;align-items:center;gap:8px">
@@ -489,12 +430,10 @@ function renderMain(){
         <div><div style="font-size:9px;color:#5050a0;letter-spacing:2px">TEAM MEAL</div><div style="font-size:15px;font-weight:900;color:#fff;line-height:1.2">${S.myTeam.name} 식사 주문</div></div>
       </div>
       <div style="display:flex;align-items:center;gap:6px">
-        <div style="display:flex;align-items:center;gap:5px">
-          <button id="live-btn" style="background:rgba(255,107,107,0.15);border:1px solid rgba(255,107,107,0.3);border-radius:20px;padding:5px 10px;font-size:11px;color:#ff9d9d;font-weight:700;display:flex;align-items:center;gap:4px">
-            <span style="width:5px;height:5px;border-radius:50%;background:#ff6b6b;display:inline-block;animation:pulse 1.5s infinite"></span>LIVE
-          </button>
-          <span style="font-size:10px;color:#404060;font-weight:600">${VERSION}</span>
-        </div>
+        <button id="live-btn" style="background:rgba(255,107,107,0.15);border:1px solid rgba(255,107,107,0.3);border-radius:20px;padding:5px 10px;font-size:11px;color:#ff9d9d;font-weight:700;display:flex;align-items:center;gap:4px">
+          <span style="width:5px;height:5px;border-radius:50%;background:#ff6b6b;display:inline-block;animation:pulse 1.5s infinite"></span>LIVE
+        </button>
+        <span style="font-size:10px;color:#404060;font-weight:600">${VERSION}</span>
         <div style="background:rgba(108,99,255,0.15);border:1px solid rgba(108,99,255,0.3);border-radius:20px;padding:3px 9px;font-size:11px;color:#9d97ff;font-weight:700">${myOrders.length}/${members.length}명</div>
         <button id="settings-btn" style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:10px;width:33px;height:33px;display:flex;align-items:center;justify-content:center;font-size:16px">⚙️</button>
       </div>
@@ -504,15 +443,13 @@ function renderMain(){
       <div style="display:flex;gap:7px;overflow-x:auto;padding-bottom:2px">${rTabs}</div>
     </div>
     ${menuPreview}
-    <!-- 컨텐츠 (팀원+현황 통합) -->
-    <div style="flex:1;overflow-y:auto;padding:10px 11px 80px">
+    <!-- 컨텐츠 -->
+    <div style="flex:1;overflow-y:auto;padding:10px 11px 30px">
       <div style="font-size:10px;color:#5050a0;letter-spacing:1px;margin-bottom:8px;font-weight:700">👥 ${S.myTeam.name} · ${members.length}명${selR?` <span style="color:#6c63ff">· ${selR.emoji} ${selR.name}</span>`:""}</div>
       <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:7px">${memberGrid}</div>
-      <!-- 초기화 버튼 -->
       ${myOrders.length>0?`<div style="display:flex;justify-content:center;margin-top:14px"><button id="reset-btn" style="background:rgba(255,80,80,0.1);border:1px solid rgba(255,80,80,0.25);border-radius:20px;padding:8px 24px;font-size:12px;color:#ff8080;font-weight:700">🗑 주문 초기화</button></div>`:""}
       ${summaryHTML}
     </div>
-    <!-- 탭바 제거 - 통합됐으므로 하단 여백만 -->
   </div>
   ${S.menuSheet?renderMenuSheet():""}
   ${S.liveBoard?renderLiveBoard():""}
@@ -521,15 +458,14 @@ function renderMain(){
   ${S.toast?`<div style="position:fixed;bottom:30px;left:50%;transform:translateX(-50%);background:rgba(20,20,50,0.97);backdrop-filter:blur(8px);border:1px solid rgba(108,99,255,0.4);border-radius:50px;padding:10px 20px;font-size:13px;font-weight:700;color:#fff;z-index:600;white-space:nowrap;animation:fadeUp 0.2s ease">${S.toast}</div>`:""}`;
 }
 
-// ── 메뉴 시트 (클릭 즉시 주문) ───────────────────────────────────
+// ── 메뉴 시트 ────────────────────────────────────────────────────
 function renderMenuSheet(){
   const r=getSelR(); if(!r) return "";
   const m=S.menuSheet.member;
-  const existingOrder=getMyOrder(m.name);
-
+  const existing=getMyOrder(m.name);
   const items=(r.menus||[]).map(menu=>{
     const active=S.selectedMenu?.id===menu.id;
-    return `<button data-menu="${menu.id}" style="background:${active?"rgba(108,99,255,0.22)":"rgba(255,255,255,0.05)"};border:1.5px solid ${active?"rgba(108,99,255,0.65)":"rgba(255,255,255,0.09)"};border-radius:13px;padding:16px 15px;text-align:left;display:flex;justify-content:space-between;align-items:center;width:100%;transition:background 0.15s,border-color 0.15s">
+    return `<button data-menu="${menu.id}" style="background:${active?"rgba(108,99,255,0.22)":"rgba(255,255,255,0.05)"};border:1.5px solid ${active?"rgba(108,99,255,0.65)":"rgba(255,255,255,0.09)"};border-radius:13px;padding:16px 15px;text-align:left;display:flex;justify-content:space-between;align-items:center;width:100%">
       <div style="display:flex;align-items:center;gap:10px">
         <div style="width:20px;height:20px;border-radius:50%;border:2px solid ${active?"#9d97ff":"rgba(255,255,255,0.2)"};background:${active?"#6c63ff":"transparent"};display:flex;align-items:center;justify-content:center;flex-shrink:0">${active?`<div style="width:7px;height:7px;border-radius:50%;background:#fff"></div>`:""}</div>
         <span style="font-size:15px;font-weight:600;color:${active?"#c4c0ff":"#e0e0f0"}">${menu.name}</span>
@@ -537,7 +473,6 @@ function renderMenuSheet(){
       <span style="font-size:15px;font-weight:700;color:${active?"#9d97ff":"#6060a0"};flex-shrink:0">${fmt(menu.price)}</span>
     </button>`;
   }).join("");
-
   return `<div style="position:fixed;inset:0;z-index:100;display:flex;flex-direction:column;justify-content:flex-end">
     <div id="ms-bg" style="position:absolute;inset:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(5px)"></div>
     <div style="position:relative;z-index:1;background:#13132a;border:1px solid rgba(255,255,255,0.1);border-radius:24px 24px 0 0;max-height:75vh;display:flex;flex-direction:column;overflow:hidden;animation:slideUp 0.25s ease">
@@ -545,9 +480,7 @@ function renderMenuSheet(){
       <div style="padding:13px 17px 10px;flex-shrink:0;display:flex;align-items:center;justify-content:space-between">
         <div>
           <div style="font-size:18px;font-weight:900;color:#fff">${r.emoji} ${r.name}</div>
-          <div style="font-size:12px;color:#6060a0;margin-top:2px">
-            👤 ${m.name}${existingOrder?` <span style="color:#ff9d60">· 현재: ${existingOrder.menu}</span>`:""}
-          </div>
+          <div style="font-size:12px;color:#6060a0;margin-top:2px">👤 ${m.name}${existing?` <span style="color:#ff9d60">· 현재: ${existing.menu}</span>`:""}</div>
           <div style="font-size:11px;color:#5050a0;margin-top:3px">메뉴를 탭하면 바로 주문됩니다</div>
         </div>
         <button id="ms-close" style="background:rgba(255,255,255,0.07);border:none;border-radius:50%;width:31px;height:31px;color:#9090c0;font-size:14px;display:flex;align-items:center;justify-content:center">✕</button>
@@ -560,7 +493,7 @@ function renderMenuSheet(){
   </div>`;
 }
 
-// ── 라이브보드 (문자보내기 추가) ─────────────────────────────────
+// ── 라이브보드 ────────────────────────────────────────────────────
 function renderLiveBoard(){
   const ticker=S.allOrders.slice(-10).reverse();
   const bars=getOrderedRestaurants().map(r=>{
@@ -568,30 +501,25 @@ function renderLiveBoard(){
     const teams=[...new Set(ro.map(o=>o.team))];
     const bw=Math.min((total/15)*100,100);
     const bc=total===0?"transparent":total>=10?"#ff6b6b":total>=6?"#ff9d60":"#6c63ff";
-    // 메뉴별 집계
     const menuCount={};
     ro.forEach(o=>{if(!menuCount[o.menu])menuCount[o.menu]=0;menuCount[o.menu]++;});
-    const menuSummary=Object.entries(menuCount).map(([name,cnt])=>`<span style="font-size:10px;color:#707090;background:rgba(255,255,255,0.04);border-radius:20px;padding:2px 7px">${name} ${cnt}개</span>`).join("");
-
+    const menuSummary=Object.entries(menuCount).map(([n,c])=>`<span style="font-size:10px;color:#707090;background:rgba(255,255,255,0.04);border-radius:20px;padding:2px 7px">${n} ${c}개</span>`).join("");
     return `<div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.07);border-radius:14px;padding:13px 14px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:7px">
         <div style="display:flex;align-items:center;gap:7px"><span style="font-size:20px">${r.emoji}</span><span style="font-size:14px;font-weight:800;color:#fff">${r.name}</span></div>
-        <div style="display:flex;align-items:center;gap:7px">
+        <div style="display:flex;align-items:center;gap:6px">
           <span style="font-size:18px;font-weight:900;color:${total>0?"#ff9d60":"#303050"}">${total}명</span>
-          ${total>0?`<button data-sms="${r.docId}" style="background:rgba(60,200,120,0.15);border:1px solid rgba(60,200,120,0.3);border-radius:20px;padding:5px 11px;font-size:11px;color:#60c880;font-weight:700">📱 문자</button>`:""}
-          ${r.phone?`<button data-call="${r.docId}" style="background:rgba(108,99,255,0.15);border:1px solid rgba(108,99,255,0.3);border-radius:20px;padding:5px 11px;font-size:11px;color:#9d97ff;font-weight:700">📞 전화</button>`:""}
+          ${total>0?`<button data-sms="${r.name}" style="background:rgba(60,200,120,0.15);border:1px solid rgba(60,200,120,0.3);border-radius:20px;padding:5px 10px;font-size:11px;color:#60c880;font-weight:700">📱</button>`:""}
+          ${r.phoneCall||r.phoneSMS?`<button data-call="${r.name}" style="background:rgba(108,99,255,0.15);border:1px solid rgba(108,99,255,0.3);border-radius:20px;padding:5px 10px;font-size:11px;color:#9d97ff;font-weight:700">📞</button>`:""}
         </div>
       </div>
-      <div style="background:rgba(255,255,255,0.06);border-radius:20px;height:6px;margin-bottom:7px;overflow:hidden"><div style="height:100%;border-radius:20px;width:${bw}%;background:${bc};transition:width 0.5s ease"></div></div>
-      ${teams.length>0?`<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:5px">${teams.map(t=>`<span style="font-size:10px;background:rgba(108,99,255,0.2);border:1px solid rgba(108,99,255,0.3);border-radius:20px;padding:2px 7px;color:#9d97ff;font-weight:700">${t}</span>`).join("")}</div>`:``}
-      ${menuSummary?`<div style="display:flex;gap:4px;flex-wrap:wrap">${menuSummary}</div>`:"<div style='font-size:11px;color:#303050'>아직 주문 없음</div>"}
+      <div style="background:rgba(255,255,255,0.06);border-radius:20px;height:6px;margin-bottom:6px;overflow:hidden"><div style="height:100%;border-radius:20px;width:${bw}%;background:${bc};transition:width 0.5s ease"></div></div>
+      ${teams.length>0?`<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px">${teams.map(t=>`<span style="font-size:10px;background:rgba(108,99,255,0.2);border:1px solid rgba(108,99,255,0.3);border-radius:20px;padding:2px 7px;color:#9d97ff;font-weight:700">${t}</span>`).join("")}</div>`:""}
+      ${menuSummary?`<div style="display:flex;gap:4px;flex-wrap:wrap">${menuSummary}</div>`:`<div style="font-size:11px;color:#303050">아직 주문 없음</div>`}
     </div>`;
   }).join("");
-
-  const ti=ticker.length===0
-    ?`<div style="text-align:center;color:#404060;font-size:12px;padding:0 20px">주문을 기다리는 중...</div>`
+  const ti=ticker.length===0?`<div style="text-align:center;color:#404060;font-size:12px;padding:0 20px">주문을 기다리는 중...</div>`
     :`<div style="display:flex;gap:40px;animation:marquee 20s linear infinite;white-space:nowrap">${[...ticker,...ticker].map(o=>`<span style="font-size:12px;color:#c0c0e0;font-weight:600"><span style="color:#9d97ff">${o.team}</span> ${o.member} → <span style="color:#ff9d60">${o.restaurantEmoji}${o.restaurant}</span> ${o.menu}</span>`).join("")}</div>`;
-
   return `<div style="position:fixed;inset:0;z-index:200;background:#07071a;display:flex;flex-direction:column">
     <div style="padding:15px 17px 12px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,0.07)">
       <div><div style="font-size:10px;color:#ff6b6b;letter-spacing:3px;font-weight:700">● LIVE</div><div style="font-size:19px;font-weight:900;color:#fff">🍽 오늘 주문 현황</div></div>
@@ -625,17 +553,17 @@ function renderSettings(){
     </div>`;
   }).join("");
 
-  const orderedR = getOrderedRestaurants();
+  const orderedR=getOrderedRestaurants();
   const restaurantRows=orderedR.map((r,idx)=>`
     <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:11px 12px;margin-bottom:7px">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+      <div style="display:flex;align-items:center;gap:8px">
         <div style="display:flex;flex-direction:column;gap:3px;flex-shrink:0">
           <button data-order-up="${r.docId}" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:5px;width:26px;height:22px;color:#9090c0;font-size:10px;display:flex;align-items:center;justify-content:center;opacity:${idx===0?0.25:1}">▲</button>
           <button data-order-down="${r.docId}" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:5px;width:26px;height:22px;color:#9090c0;font-size:10px;display:flex;align-items:center;justify-content:center;opacity:${idx===orderedR.length-1?0.25:1}">▼</button>
         </div>
         <span style="font-size:20px;flex-shrink:0">${r.emoji}</span>
         <div style="flex:1;min-width:0">
-          <div style="font-size:14px;font-weight:800;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.name}</div>
+          <div style="font-size:14px;font-weight:800;color:#fff">${r.name}</div>
           <div style="font-size:11px;color:#5050a0">${(r.menus||[]).length}개 메뉴${(r.phoneSMS||r.phoneCall)?` · 📞`:" · 전화없음"}</div>
         </div>
         <div style="display:flex;gap:5px;flex-shrink:0">
@@ -681,6 +609,7 @@ function renderSettings(){
               <button id="add-r-btn" style="height:44px;background:linear-gradient(135deg,#6c63ff,#9d97ff);border:none;border-radius:8px;padding:0 15px;color:#fff;font-size:13px;font-weight:700;white-space:nowrap;flex-shrink:0">+ 추가</button>
             </div>
           </div>
+          <div style="font-size:11px;color:#5050a0;margin-bottom:8px;font-weight:700">▲▼ 순서 조절 · ${S.myTeam?.name} 전용</div>
           ${restaurantRows}
         `}
       </div>
@@ -691,20 +620,18 @@ function renderSettings(){
 // ── 식당 편집 팝업 ────────────────────────────────────────────────
 function renderRestaurantPopup(){
   const r=S.restaurants.find(r=>r.docId===S.restaurantPopup); if(!r) return "";
-
   const menuRows=(r.menus||[]).map(m=>{
-    if(S.popupEditMenuId===m.id) return `
-      <div style="background:rgba(108,99,255,0.1);border:1.5px solid rgba(108,99,255,0.4);border-radius:10px;padding:11px;margin-bottom:7px">
-        <div style="font-size:11px;color:#9d97ff;font-weight:700;margin-bottom:8px">메뉴 수정</div>
-        <div style="display:flex;gap:7px;margin-bottom:8px">
-          <input id="pop-edit-mname" value="${S.popupEditMenuName}" placeholder="메뉴명" style="flex:1;height:44px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:9px;padding:0 11px;color:#e0e0f0;font-size:14px;outline:none"/>
-          <input id="pop-edit-mprice" type="number" value="${S.popupEditMenuPrice}" placeholder="가격" style="width:90px;height:44px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:9px;padding:0 10px;color:#e0e0f0;font-size:14px;outline:none;flex-shrink:0"/>
-        </div>
-        <div style="display:flex;gap:7px">
-          <button id="pop-save-menu-edit" style="flex:1;height:44px;background:linear-gradient(135deg,#6c63ff,#9d97ff);border:none;border-radius:9px;color:#fff;font-size:14px;font-weight:800">저장</button>
-          <button id="pop-cancel-menu-edit" style="flex:1;height:44px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:9px;color:#9090c0;font-size:14px">취소</button>
-        </div>
-      </div>`;
+    if(S.popupEditMenuId===m.id) return `<div style="background:rgba(108,99,255,0.1);border:1.5px solid rgba(108,99,255,0.4);border-radius:10px;padding:11px;margin-bottom:7px">
+      <div style="font-size:11px;color:#9d97ff;font-weight:700;margin-bottom:8px">메뉴 수정</div>
+      <div style="display:flex;gap:7px;margin-bottom:8px">
+        <input id="pop-edit-mname" value="${S.popupEditMenuName}" placeholder="메뉴명" style="flex:1;height:44px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:9px;padding:0 11px;color:#e0e0f0;font-size:14px;outline:none"/>
+        <input id="pop-edit-mprice" type="number" value="${S.popupEditMenuPrice}" placeholder="가격" style="width:90px;height:44px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:9px;padding:0 10px;color:#e0e0f0;font-size:14px;outline:none;flex-shrink:0"/>
+      </div>
+      <div style="display:flex;gap:7px">
+        <button id="pop-save-menu-edit" style="flex:1;height:44px;background:linear-gradient(135deg,#6c63ff,#9d97ff);border:none;border-radius:9px;color:#fff;font-size:14px;font-weight:800">저장</button>
+        <button id="pop-cancel-menu-edit" style="flex:1;height:44px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:9px;color:#9090c0;font-size:14px">취소</button>
+      </div>
+    </div>`;
     return `<div style="display:flex;align-items:center;justify-content:space-between;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:12px 13px;margin-bottom:7px">
       <div><div style="font-size:14px;font-weight:600;color:#e0e0f0">${m.name}</div><div style="font-size:13px;color:#9d97ff;font-weight:700;margin-top:2px">${fmt(m.price)}</div></div>
       <div style="display:flex;gap:7px">
@@ -713,20 +640,15 @@ function renderRestaurantPopup(){
       </div>
     </div>`;
   }).join("");
-
   return `<div style="position:fixed;inset:0;z-index:400;display:flex;align-items:center;justify-content:center;padding:16px">
     <div id="popup-bg" style="position:absolute;inset:0;background:rgba(0,0,0,0.82);backdrop-filter:blur(8px)"></div>
     <div style="position:relative;z-index:1;background:#16162e;border:1px solid rgba(255,255,255,0.13);border-radius:20px;width:100%;max-width:440px;max-height:86vh;display:flex;flex-direction:column;overflow:hidden;animation:popIn 0.2s ease">
-      <!-- 헤더 -->
       <div style="padding:15px 16px 12px;border-bottom:1px solid rgba(255,255,255,0.07);flex-shrink:0;display:flex;align-items:center;justify-content:space-between">
-        <div style="display:flex;align-items:center;gap:9px">
-          <span style="font-size:26px">${r.emoji}</span>
-          <div><div style="font-size:16px;font-weight:900;color:#fff">${r.name}</div><div style="font-size:11px;color:#5050a0">식당 수정</div></div>
-        </div>
+        <div style="display:flex;align-items:center;gap:9px"><span style="font-size:26px">${r.emoji}</span><div><div style="font-size:16px;font-weight:900;color:#fff">${r.name}</div><div style="font-size:11px;color:#5050a0">식당 수정</div></div></div>
         <button id="popup-close" style="background:rgba(255,255,255,0.07);border:none;border-radius:50%;width:32px;height:32px;color:#9090c0;font-size:15px;display:flex;align-items:center;justify-content:center">✕</button>
       </div>
       <div style="overflow-y:auto;flex:1;padding:14px 15px 20px">
-        <!-- 식당명 -->
+        <!-- 이름 -->
         <div style="margin-bottom:10px">
           <div style="font-size:11px;color:#5050a0;font-weight:700;margin-bottom:7px">식당 이름</div>
           <div style="display:flex;gap:7px;margin-bottom:7px">
@@ -740,7 +662,7 @@ function renderRestaurantPopup(){
           <input id="pop-phone-sms" value="${S.popupRestaurantPhoneSMS}" placeholder="010-0000-0000" type="tel" style="width:100%;height:44px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.13);border-radius:9px;padding:0 12px;color:#e0e0f0;font-size:14px;outline:none"/>
         </div>
         <!-- 전화용 번호 -->
-        <div style="margin-bottom:10px">
+        <div style="margin-bottom:12px">
           <div style="font-size:11px;color:#5050a0;font-weight:700;margin-bottom:6px">📞 전화용 번호 <span style="color:#404060;font-weight:400">(일반전화)</span></div>
           <input id="pop-phone-call" value="${S.popupRestaurantPhoneCall}" placeholder="02-0000-0000" type="tel" style="width:100%;height:44px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.13);border-radius:9px;padding:0 12px;color:#e0e0f0;font-size:14px;outline:none"/>
         </div>
@@ -753,10 +675,9 @@ function renderRestaurantPopup(){
           </label>
           <input type="file" id="popup-img-input" accept="image/*" style="display:none"/>
         </div>
-        <!-- 메뉴 목록 -->
+        <!-- 메뉴 -->
         <div style="font-size:11px;color:#5050a0;font-weight:700;margin-bottom:8px">메뉴 목록 · ${(r.menus||[]).length}개</div>
         ${menuRows||`<div style="font-size:13px;color:#404060;text-align:center;padding:10px 0 14px">메뉴가 없습니다.</div>`}
-        <!-- 메뉴 추가 -->
         <div style="background:rgba(108,99,255,0.07);border:1px solid rgba(108,99,255,0.2);border-radius:12px;padding:12px;margin-top:8px">
           <div style="font-size:11px;color:#7070b0;font-weight:700;margin-bottom:9px">+ 메뉴 추가</div>
           <div style="display:flex;gap:7px;margin-bottom:8px">
@@ -784,47 +705,35 @@ function bindMain(){
     };
   });
   document.querySelectorAll("[data-delete]").forEach(btn=>{btn.onclick=async()=>{await deleteDoc(doc(db,"orders",btn.dataset.delete));};});
-  // 현황판 문자/전화 버튼
   document.querySelectorAll("[data-sms-main]").forEach(btn=>{btn.onclick=()=>sendSMS(btn.dataset.smsMain);});
   document.querySelectorAll("[data-call-main]").forEach(btn=>{btn.onclick=()=>callRestaurant(btn.dataset.callMain);});
 }
-
 function bindMenuSheet(){
   document.getElementById("ms-bg")?.addEventListener("click",()=>{S.menuSheet=null;S.selectedMenu=null;render();});
   document.getElementById("ms-close")?.addEventListener("click",()=>{S.menuSheet=null;S.selectedMenu=null;render();});
   document.querySelectorAll("[data-menu]").forEach(btn=>{
     btn.onclick=async()=>{
-      const r=getSelR();
-      const menu=r?.menus?.find(m=>m.id===btn.dataset.menu);
-      const member=S.menuSheet?.member;
+      const r=getSelR(); const menu=r?.menus?.find(m=>m.id===btn.dataset.menu); const member=S.menuSheet?.member;
       if(!menu||!member) return;
       S.selectedMenu=menu;
       document.querySelectorAll("[data-menu]").forEach(b=>{
-        const active=b.dataset.menu===menu.id;
-        b.style.background=active?"rgba(108,99,255,0.35)":"rgba(255,255,255,0.05)";
-        b.style.borderColor=active?"rgba(108,99,255,0.8)":"rgba(255,255,255,0.09)";
+        const a=b.dataset.menu===menu.id;
+        b.style.background=a?"rgba(108,99,255,0.35)":"rgba(255,255,255,0.05)";
+        b.style.borderColor=a?"rgba(108,99,255,0.8)":"rgba(255,255,255,0.09)";
       });
-      await submitOrder(member, menu);
-    };
-  });
+      await submitOrder(member,menu);
     };
   });
 }
-
 function bindLiveBoard(){
   document.getElementById("live-close")?.addEventListener("click",()=>{S.liveBoard=false;render();});
-  document.querySelectorAll("[data-sms]").forEach(btn=>{
-    btn.onclick=()=>{const r=S.restaurants.find(r=>r.docId===btn.dataset.sms);if(r)sendSMS(r);};
-  });
-  document.querySelectorAll("[data-call]").forEach(btn=>{
-    btn.onclick=()=>{const r=S.restaurants.find(r=>r.docId===btn.dataset.call);if(r)callRestaurant(r);};
-  });
+  document.querySelectorAll("[data-sms]").forEach(btn=>{btn.onclick=()=>sendSMS(btn.dataset.sms);});
+  document.querySelectorAll("[data-call]").forEach(btn=>{btn.onclick=()=>callRestaurant(btn.dataset.call);});
 }
-
 function bindSettings(){
   document.getElementById("st-bg")?.addEventListener("click",()=>{S.settings=false;render();});
   document.getElementById("st-close")?.addEventListener("click",()=>{S.settings=false;render();});
-  document.getElementById("change-team-btn")?.addEventListener("click",()=>{localStorage.removeItem("myTeamDocId");S.myTeamDocId=null;S.settings=false;S.screen="teamSelect";S.myTeam=null;render();});
+  document.getElementById("change-team-btn")?.addEventListener("click",()=>{localStorage.removeItem("myTeamDocId");S.myTeamDocId=null;S.settings=false;S.screen="teamSelect";S.myTeam=null;S.restaurantOrder=[];render();});
   document.querySelectorAll("[data-stab]").forEach(btn=>{btn.onclick=()=>{S.settingsTab=btn.dataset.stab;render();};});
   document.getElementById("inp-no")?.addEventListener("input",e=>S.newMemberNo=e.target.value);
   document.getElementById("inp-name")?.addEventListener("input",e=>S.newMemberName=e.target.value);
@@ -838,20 +747,16 @@ function bindSettings(){
   document.getElementById("inp-remoji")?.addEventListener("input",e=>S.newRestaurantEmoji=e.target.value);
   document.getElementById("inp-rname")?.addEventListener("input",e=>S.newRestaurantName=e.target.value);
   document.getElementById("add-r-btn")?.addEventListener("click",addRestaurant);
-  document.querySelectorAll("[data-rm-r]").forEach(btn=>{btn.onclick=()=>removeRestaurant(btn.dataset.rmR, btn.dataset.rmName||btn.dataset.rmR);});
-  document.querySelectorAll("[data-order-up]").forEach(btn=>{btn.onclick=()=>moveRestaurant(btn.dataset.orderUp,"up");});
-  document.querySelectorAll("[data-order-down]").forEach(btn=>{btn.onclick=()=>moveRestaurant(btn.dataset.orderDown,"down");});
+  document.querySelectorAll("[data-rm-r]").forEach(btn=>{btn.onclick=()=>removeRestaurant(btn.dataset.rmR,btn.dataset.rmName||"");});
   document.querySelectorAll("[data-open-popup]").forEach(btn=>{
     btn.onclick=()=>{
       const r=S.restaurants.find(r=>r.docId===btn.dataset.openPopup);
-      if(r){S.restaurantPopup=r.docId;S.popupRestaurantName=r.name;S.popupRestaurantEmoji=r.emoji;
-        S.popupRestaurantPhoneSMS=r.phoneSMS||"";S.popupRestaurantPhoneCall=r.phoneCall||"";
-
-        S.popupNewMenuName="";S.popupNewMenuPrice="";S.popupEditMenuId=null;render();}
+      if(r){S.restaurantPopup=r.docId;S.popupRestaurantName=r.name;S.popupRestaurantEmoji=r.emoji;S.popupRestaurantPhoneSMS=r.phoneSMS||"";S.popupRestaurantPhoneCall=r.phoneCall||"";S.popupNewMenuName="";S.popupNewMenuPrice="";S.popupEditMenuId=null;render();}
     };
   });
+  document.querySelectorAll("[data-order-up]").forEach(btn=>{btn.onclick=()=>moveRestaurant(btn.dataset.orderUp,"up");});
+  document.querySelectorAll("[data-order-down]").forEach(btn=>{btn.onclick=()=>moveRestaurant(btn.dataset.orderDown,"down");});
 }
-
 function bindRestaurantPopup(){
   document.getElementById("popup-bg")?.addEventListener("click",()=>{S.restaurantPopup=null;S.popupEditMenuId=null;render();});
   document.getElementById("popup-close")?.addEventListener("click",()=>{S.restaurantPopup=null;S.popupEditMenuId=null;render();});
@@ -860,8 +765,6 @@ function bindRestaurantPopup(){
   document.getElementById("pop-phone-sms")?.addEventListener("input",e=>S.popupRestaurantPhoneSMS=e.target.value);
   document.getElementById("pop-phone-call")?.addEventListener("input",e=>S.popupRestaurantPhoneCall=e.target.value);
   document.getElementById("pop-save-info")?.addEventListener("click",savePopupInfo);
-  // 단체메뉴
-
   const imgLabel=document.getElementById("popup-img-label");
   const imgInput=document.getElementById("popup-img-input");
   imgLabel?.addEventListener("click",()=>imgInput?.click());
@@ -874,9 +777,7 @@ function bindRestaurantPopup(){
   document.getElementById("pop-new-mname")?.addEventListener("input",e=>S.popupNewMenuName=e.target.value);
   document.getElementById("pop-new-mprice")?.addEventListener("input",e=>S.popupNewMenuPrice=e.target.value);
   document.getElementById("pop-add-menu")?.addEventListener("click",addPopupMenu);
-  document.querySelectorAll("[data-pop-edit-menu]").forEach(btn=>{
-    btn.onclick=()=>{const r=S.restaurants.find(r=>r.docId===S.restaurantPopup);const m=r?.menus?.find(m=>m.id===btn.dataset.popEditMenu);if(m){S.popupEditMenuId=m.id;S.popupEditMenuName=m.name;S.popupEditMenuPrice=String(m.price);render();}};
-  });
+  document.querySelectorAll("[data-pop-edit-menu]").forEach(btn=>{btn.onclick=()=>{const r=S.restaurants.find(r=>r.docId===S.restaurantPopup);const m=r?.menus?.find(m=>m.id===btn.dataset.popEditMenu);if(m){S.popupEditMenuId=m.id;S.popupEditMenuName=m.name;S.popupEditMenuPrice=String(m.price);render();}};});
   document.getElementById("pop-edit-mname")?.addEventListener("input",e=>S.popupEditMenuName=e.target.value);
   document.getElementById("pop-edit-mprice")?.addEventListener("input",e=>S.popupEditMenuPrice=e.target.value);
   document.getElementById("pop-save-menu-edit")?.addEventListener("click",savePopupMenuEdit);
