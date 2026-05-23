@@ -23,7 +23,7 @@ input{font-family:inherit;}
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, setDoc, writeBatch, query, where, getDocs } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-const VERSION = "v0.7";
+const VERSION = "v0.8";
 
 const firebaseConfig = {
   apiKey: "AIzaSyAQzhhO8NbhvUkNOjnjvVJgNNN4vx8KRXU",
@@ -70,11 +70,11 @@ const DEFAULT_TEAMS = [
 ];
 
 const DEFAULT_RESTAURANTS = [
-  {id:"r1",name:"한솥도시락",emoji:"🍱",phone:"",image:null,menus:[{id:"m1",name:"불고기 도시락",price:7500},{id:"m2",name:"제육볶음 도시락",price:7000},{id:"m3",name:"치킨마요 도시락",price:6500}]},
-  {id:"r2",name:"맥도날드",emoji:"🍔",phone:"",image:null,menus:[{id:"m1",name:"빅맥 세트",price:8500},{id:"m2",name:"상하이버거 세트",price:8000},{id:"m3",name:"맥스파이시 세트",price:8200}]},
-  {id:"r3",name:"BBQ치킨",emoji:"🍗",phone:"",image:null,menus:[{id:"m1",name:"황금올리브 순살",price:21000},{id:"m2",name:"골든오리지날",price:19000}]},
-  {id:"r4",name:"파파존스",emoji:"🍕",phone:"",image:null,menus:[{id:"m1",name:"페퍼로니 피자 L",price:29000},{id:"m2",name:"불고기 피자 L",price:27000}]},
-  {id:"r5",name:"스시로",emoji:"🍣",phone:"",image:null,menus:[{id:"m1",name:"연어 2p",price:3000},{id:"m2",name:"모둠 8p 세트",price:12000}]},
+  {id:"r1",name:"한솥도시락",emoji:"🍱",phoneSMS:"",phoneCall:"",groupMenu:null,image:null,menus:[{id:"m1",name:"불고기 도시락",price:7500},{id:"m2",name:"제육볶음 도시락",price:7000},{id:"m3",name:"치킨마요 도시락",price:6500}]},
+  {id:"r2",name:"맥도날드",emoji:"🍔",phoneSMS:"",phoneCall:"",groupMenu:null,image:null,menus:[{id:"m1",name:"빅맥 세트",price:8500},{id:"m2",name:"상하이버거 세트",price:8000},{id:"m3",name:"맥스파이시 세트",price:8200}]},
+  {id:"r3",name:"BBQ치킨",emoji:"🍗",phoneSMS:"",phoneCall:"",groupMenu:null,image:null,menus:[{id:"m1",name:"황금올리브 순살",price:21000},{id:"m2",name:"골든오리지날",price:19000}]},
+  {id:"r4",name:"파파존스",emoji:"🍕",phoneSMS:"",phoneCall:"",groupMenu:null,image:null,menus:[{id:"m1",name:"페퍼로니 피자 L",price:29000},{id:"m2",name:"불고기 피자 L",price:27000}]},
+  {id:"r5",name:"스시로",emoji:"🍣",phoneSMS:"",phoneCall:"",groupMenu:null,image:null,menus:[{id:"m1",name:"연어 2p",price:3000},{id:"m2",name:"모둠 8p 세트",price:12000}]},
 ];
 
 // ── 상태 ─────────────────────────────────────────────────────────
@@ -98,6 +98,8 @@ let S = {
   restaurantPopup:null,
   popupRestaurantName:"", popupRestaurantEmoji:"", popupRestaurantPhone:"",
   popupNewMenuName:"", popupNewMenuPrice:"",
+  popupRestaurantPhoneSMS:"", popupRestaurantPhoneCall:"",
+  popupGroupMenuName:"", popupGroupMenuPrice:"",
   popupEditMenuId:null, popupEditMenuName:"", popupEditMenuPrice:"",
 };
 
@@ -208,7 +210,7 @@ async function saveMemberEdit(){
 async function addRestaurant(){
   const name=S.newRestaurantName.trim(); if(!name){showToast("⚠️ 식당 이름 입력");return;}
   const id=`r_${uid()}`;
-  await setDoc(doc(db,"restaurants",id),{id,name,emoji:S.newRestaurantEmoji||"🍽",phone:"",image:null,menus:[]});
+  await setDoc(doc(db,"restaurants",id),{id,name,emoji:S.newRestaurantEmoji||"🍽",phoneSMS:"",phoneCall:"",groupMenu:null,image:null,menus:[]});
   S.newRestaurantName=""; S.newRestaurantEmoji="🍽"; showToast(`✅ ${name} 추가`);
 }
 async function removeRestaurant(docId){
@@ -220,8 +222,24 @@ async function removeRestaurant(docId){
 async function savePopupInfo(){
   const r=S.restaurants.find(r=>r.docId===S.restaurantPopup); if(!r) return;
   const name=S.popupRestaurantName.trim(); if(!name) return;
-  await setDoc(doc(db,"restaurants",r.docId),{...r,name,emoji:S.popupRestaurantEmoji||r.emoji,phone:S.popupRestaurantPhone||""});
+  await setDoc(doc(db,"restaurants",r.docId),{...r,name,emoji:S.popupRestaurantEmoji||r.emoji,phoneSMS:S.popupRestaurantPhoneSMS||"",phoneCall:S.popupRestaurantPhoneCall||""});
   showToast("✅ 저장됨");
+}
+
+async function saveGroupMenu(){
+  const r=S.restaurants.find(r=>r.docId===S.restaurantPopup); if(!r) return;
+  const name=S.popupGroupMenuName.trim();
+  const price=parseInt(S.popupGroupMenuPrice);
+  if(!name||isNaN(price)){showToast("⚠️ 단체메뉴명과 가격 입력");return;}
+  await setDoc(doc(db,"restaurants",r.docId),{...r,groupMenu:{name,price}});
+  showToast("✅ 단체메뉴 저장됨");
+}
+
+async function clearGroupMenu(){
+  const r=S.restaurants.find(r=>r.docId===S.restaurantPopup); if(!r) return;
+  await setDoc(doc(db,"restaurants",r.docId),{...r,groupMenu:null});
+  S.popupGroupMenuName=""; S.popupGroupMenuPrice="";
+  showToast("✅ 단체메뉴 삭제됨");
 }
 async function addPopupMenu(){
   const r=S.restaurants.find(r=>r.docId===S.restaurantPopup); if(!r) return;
@@ -274,20 +292,20 @@ function sendSMS(restaurantName){
   const rOrders=S.allOrders.filter(o=>o.team===S.myTeam?.name&&o.restaurant===restaurantName);
   if(rOrders.length===0){showToast("주문이 없습니다");return;}
   const body=buildSMSBody(rData||{name:restaurantName,emoji:"🍽"},rOrders);
-  const phone=(rData?.phone||"").replace(/[^0-9]/g,"");
+  const phone=(rData?.phoneSMS||"").replace(/[^0-9]/g,"");
   if(phone){
     window.location.href=`sms:${phone}?body=${encodeURIComponent(body)}`;
   } else {
     navigator.clipboard?.writeText(body);
-    showToast("📋 전화번호 없음 — 내용 복사됨");
+    showToast("📋 문자번호 없음 — 내용 복사됨");
   }
 }
 
 function callRestaurant(restaurantName){
   const rData=S.restaurants.find(r=>r.name===restaurantName);
-  const phone=(rData?.phone||"").replace(/[^0-9]/g,"");
+  const phone=(rData?.phoneCall||rData?.phoneSMS||"").replace(/[^0-9]/g,"");
   if(phone) window.location.href=`tel:${phone}`;
-  else showToast("⚠️ 식당 전화번호를 먼저 등록해주세요");
+  else showToast("⚠️ 전화번호를 먼저 등록해주세요");
 }
 
 // ── 렌더 ─────────────────────────────────────────────────────────
@@ -372,7 +390,7 @@ function renderMain(){
     myOrders.forEach(o=>{if(!groups[o.restaurant])groups[o.restaurant]={name:o.restaurant,emoji:o.restaurantEmoji,items:[]};groups[o.restaurant].items.push(o);});
     const groupsHTML=Object.values(groups).map(g=>{
       const rData=S.restaurants.find(r=>r.name===g.name);
-      const hasPhone=!!(rData?.phone);
+      const hasPhone=!!(rData?.phoneCall||rData?.phoneSMS);
       // 메뉴별 집계
       const menuCount={};
       g.items.forEach(o=>{if(!menuCount[o.menu])menuCount[o.menu]={name:o.menu,price:o.price,count:0};menuCount[o.menu].count++;});
@@ -499,6 +517,13 @@ function renderMenuSheet(){
       </div>
       <div style="overflow-y:auto;flex:1;padding:0 17px 20px">
         ${r.image?`<img src="${r.image}" style="width:100%;max-height:140px;object-fit:cover;border-radius:12px;display:block;margin-bottom:12px">`:`<div style="background:rgba(255,255,255,0.02);border:1.5px dashed rgba(255,255,255,0.07);border-radius:12px;height:50px;display:flex;align-items:center;justify-content:center;color:#303050;font-size:12px;margin-bottom:12px;gap:6px"><span>🖼</span><span>식단표 이미지 준비 중</span></div>`}
+        ${r.groupMenu?`<button data-menu-group="1" style="background:rgba(255,160,60,0.15);border:2px solid rgba(255,160,60,0.5);border-radius:13px;padding:14px 15px;text-align:left;display:flex;justify-content:space-between;align-items:center;width:100%;margin-bottom:8px">
+          <div style="display:flex;align-items:center;gap:10px">
+            <span style="font-size:16px">🍱</span>
+            <div><div style="font-size:14px;font-weight:800;color:#ffb860">단체메뉴</div><div style="font-size:13px;font-weight:600;color:#e0e0f0;margin-top:1px">${r.groupMenu.name}</div></div>
+          </div>
+          <span style="font-size:15px;font-weight:700;color:#ff9d60;flex-shrink:0">${fmt(r.groupMenu.price)}</span>
+        </button>`:""}
         <div style="display:flex;flex-direction:column;gap:8px">${items}</div>
       </div>
     </div>
@@ -674,12 +699,31 @@ function renderRestaurantPopup(){
             <input id="pop-name" value="${S.popupRestaurantName}" placeholder="식당 이름" style="flex:1;height:44px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.13);border-radius:9px;padding:0 12px;color:#e0e0f0;font-size:14px;outline:none"/>
           </div>
         </div>
-        <!-- 전화번호 -->
+        <!-- 문자용 번호 -->
+        <div style="margin-bottom:8px">
+          <div style="font-size:11px;color:#5050a0;font-weight:700;margin-bottom:6px">📱 문자용 번호 <span style="color:#404060;font-weight:400">(휴대폰)</span></div>
+          <input id="pop-phone-sms" value="${S.popupRestaurantPhoneSMS}" placeholder="010-0000-0000" type="tel" style="width:100%;height:44px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.13);border-radius:9px;padding:0 12px;color:#e0e0f0;font-size:14px;outline:none"/>
+        </div>
+        <!-- 전화용 번호 -->
         <div style="margin-bottom:10px">
-          <div style="font-size:11px;color:#5050a0;font-weight:700;margin-bottom:7px">전화번호 <span style="color:#404060;font-weight:400">(문자/전화 연결에 사용)</span></div>
-          <input id="pop-phone" value="${S.popupRestaurantPhone}" placeholder="010-0000-0000 또는 02-000-0000" type="tel" style="width:100%;height:44px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.13);border-radius:9px;padding:0 12px;color:#e0e0f0;font-size:14px;outline:none"/>
+          <div style="font-size:11px;color:#5050a0;font-weight:700;margin-bottom:6px">📞 전화용 번호 <span style="color:#404060;font-weight:400">(일반전화)</span></div>
+          <input id="pop-phone-call" value="${S.popupRestaurantPhoneCall}" placeholder="02-0000-0000" type="tel" style="width:100%;height:44px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.13);border-radius:9px;padding:0 12px;color:#e0e0f0;font-size:14px;outline:none"/>
         </div>
         <button id="pop-save-info" style="width:100%;height:46px;background:linear-gradient(135deg,#6c63ff,#9d97ff);border:none;border-radius:10px;color:#fff;font-size:14px;font-weight:800;margin-bottom:14px">저장</button>
+        <!-- 단체메뉴 -->
+        <div style="background:rgba(255,160,60,0.07);border:1px solid rgba(255,160,60,0.2);border-radius:12px;padding:12px;margin-bottom:14px">
+          <div style="font-size:11px;color:#ff9d60;font-weight:700;margin-bottom:7px">🍱 단체메뉴 <span style="color:#604030;font-weight:400">(전체 동일 메뉴 주문 시)</span></div>
+          ${(()=>{const r=S.restaurants.find(r=>r.docId===S.restaurantPopup);const gm=r?.groupMenu;return gm?`
+            <div style="background:rgba(255,160,60,0.12);border:1px solid rgba(255,160,60,0.3);border-radius:9px;padding:10px 13px;display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+              <div><div style="font-size:14px;font-weight:700;color:#fff">${gm.name}</div><div style="font-size:13px;color:#ff9d60;font-weight:700;margin-top:2px">${fmt(gm.price)}</div></div>
+              <button id="pop-clear-group" style="background:rgba(255,80,80,0.15);border:1px solid rgba(255,80,80,0.3);border-radius:8px;padding:6px 12px;color:#ff8080;font-size:12px;font-weight:700">삭제</button>
+            </div>`:``})()}
+          <div style="display:flex;gap:7px;margin-bottom:7px">
+            <input id="pop-group-name" placeholder="단체메뉴 이름" value="${S.popupGroupMenuName}" style="flex:1;height:42px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:9px;padding:0 11px;color:#e0e0f0;font-size:13px;outline:none"/>
+            <input id="pop-group-price" placeholder="가격" type="number" value="${S.popupGroupMenuPrice}" style="width:88px;height:42px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:9px;padding:0 10px;color:#e0e0f0;font-size:13px;outline:none;flex-shrink:0"/>
+          </div>
+          <button id="pop-save-group" style="width:100%;height:42px;background:linear-gradient(135deg,#ff9d60,#ffb880);border:none;border-radius:9px;color:#fff;font-size:13px;font-weight:800">단체메뉴 설정</button>
+        </div>
         <!-- 이미지 -->
         <div style="margin-bottom:14px">
           <div style="font-size:11px;color:#5050a0;font-weight:700;margin-bottom:7px">식단표 이미지</div>
@@ -733,15 +777,23 @@ function bindMenuSheet(){
       const menu=r?.menus?.find(m=>m.id===btn.dataset.menu);
       const member=S.menuSheet?.member;
       if(!menu||!member) return;
-      // 시각적 피드백 즉시
       S.selectedMenu=menu;
       document.querySelectorAll("[data-menu]").forEach(b=>{
         const active=b.dataset.menu===menu.id;
         b.style.background=active?"rgba(108,99,255,0.35)":"rgba(255,255,255,0.05)";
         b.style.borderColor=active?"rgba(108,99,255,0.8)":"rgba(255,255,255,0.09)";
       });
-      // 바로 주문
       await submitOrder(member, menu);
+    };
+  });
+  // 단체메뉴 버튼
+  document.querySelectorAll("[data-menu-group]").forEach(btn=>{
+    btn.onclick=async()=>{
+      const r=getSelR();
+      const member=S.menuSheet?.member;
+      if(!r?.groupMenu||!member) return;
+      btn.style.background="rgba(255,160,60,0.35)";
+      await submitOrder(member, {id:"group",name:r.groupMenu.name,price:r.groupMenu.price});
     };
   });
 }
@@ -777,7 +829,10 @@ function bindSettings(){
   document.querySelectorAll("[data-open-popup]").forEach(btn=>{
     btn.onclick=()=>{
       const r=S.restaurants.find(r=>r.docId===btn.dataset.openPopup);
-      if(r){S.restaurantPopup=r.docId;S.popupRestaurantName=r.name;S.popupRestaurantEmoji=r.emoji;S.popupRestaurantPhone=r.phone||"";S.popupNewMenuName="";S.popupNewMenuPrice="";S.popupEditMenuId=null;render();}
+      if(r){S.restaurantPopup=r.docId;S.popupRestaurantName=r.name;S.popupRestaurantEmoji=r.emoji;
+        S.popupRestaurantPhoneSMS=r.phoneSMS||"";S.popupRestaurantPhoneCall=r.phoneCall||"";
+        S.popupGroupMenuName=r.groupMenu?.name||"";S.popupGroupMenuPrice=r.groupMenu?.price?String(r.groupMenu.price):"";
+        S.popupNewMenuName="";S.popupNewMenuPrice="";S.popupEditMenuId=null;render();}
     };
   });
 }
@@ -787,8 +842,14 @@ function bindRestaurantPopup(){
   document.getElementById("popup-close")?.addEventListener("click",()=>{S.restaurantPopup=null;S.popupEditMenuId=null;render();});
   document.getElementById("pop-emoji")?.addEventListener("input",e=>S.popupRestaurantEmoji=e.target.value);
   document.getElementById("pop-name")?.addEventListener("input",e=>S.popupRestaurantName=e.target.value);
-  document.getElementById("pop-phone")?.addEventListener("input",e=>S.popupRestaurantPhone=e.target.value);
+  document.getElementById("pop-phone-sms")?.addEventListener("input",e=>S.popupRestaurantPhoneSMS=e.target.value);
+  document.getElementById("pop-phone-call")?.addEventListener("input",e=>S.popupRestaurantPhoneCall=e.target.value);
   document.getElementById("pop-save-info")?.addEventListener("click",savePopupInfo);
+  // 단체메뉴
+  document.getElementById("pop-group-name")?.addEventListener("input",e=>S.popupGroupMenuName=e.target.value);
+  document.getElementById("pop-group-price")?.addEventListener("input",e=>S.popupGroupMenuPrice=e.target.value);
+  document.getElementById("pop-save-group")?.addEventListener("click",saveGroupMenu);
+  document.getElementById("pop-clear-group")?.addEventListener("click",clearGroupMenu);
   const imgLabel=document.getElementById("popup-img-label");
   const imgInput=document.getElementById("popup-img-input");
   imgLabel?.addEventListener("click",()=>imgInput?.click());
