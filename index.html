@@ -21,9 +21,9 @@ input{font-family:inherit;}
 <div id="app"></div>
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, setDoc, writeBatch, query, where, getDocs } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, setDoc, writeBatch, query, where, getDocs, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-const VERSION = "v0.8";
+const VERSION = "v0.9";
 
 const firebaseConfig = {
   apiKey: "AIzaSyAQzhhO8NbhvUkNOjnjvVJgNNN4vx8KRXU",
@@ -70,11 +70,11 @@ const DEFAULT_TEAMS = [
 ];
 
 const DEFAULT_RESTAURANTS = [
-  {id:"r1",name:"한솥도시락",emoji:"🍱",phoneSMS:"",phoneCall:"",groupMenu:null,image:null,menus:[{id:"m1",name:"불고기 도시락",price:7500},{id:"m2",name:"제육볶음 도시락",price:7000},{id:"m3",name:"치킨마요 도시락",price:6500}]},
-  {id:"r2",name:"맥도날드",emoji:"🍔",phoneSMS:"",phoneCall:"",groupMenu:null,image:null,menus:[{id:"m1",name:"빅맥 세트",price:8500},{id:"m2",name:"상하이버거 세트",price:8000},{id:"m3",name:"맥스파이시 세트",price:8200}]},
-  {id:"r3",name:"BBQ치킨",emoji:"🍗",phoneSMS:"",phoneCall:"",groupMenu:null,image:null,menus:[{id:"m1",name:"황금올리브 순살",price:21000},{id:"m2",name:"골든오리지날",price:19000}]},
-  {id:"r4",name:"파파존스",emoji:"🍕",phoneSMS:"",phoneCall:"",groupMenu:null,image:null,menus:[{id:"m1",name:"페퍼로니 피자 L",price:29000},{id:"m2",name:"불고기 피자 L",price:27000}]},
-  {id:"r5",name:"스시로",emoji:"🍣",phoneSMS:"",phoneCall:"",groupMenu:null,image:null,menus:[{id:"m1",name:"연어 2p",price:3000},{id:"m2",name:"모둠 8p 세트",price:12000}]},
+  {id:"r1",name:"한솥도시락",emoji:"🍱",phoneSMS:"",phoneCall:"",image:null,menus:[{id:"m1",name:"불고기 도시락",price:7500},{id:"m2",name:"제육볶음 도시락",price:7000},{id:"m3",name:"치킨마요 도시락",price:6500}]},
+  {id:"r2",name:"맥도날드",emoji:"🍔",phoneSMS:"",phoneCall:"",image:null,menus:[{id:"m1",name:"빅맥 세트",price:8500},{id:"m2",name:"상하이버거 세트",price:8000},{id:"m3",name:"맥스파이시 세트",price:8200}]},
+  {id:"r3",name:"BBQ치킨",emoji:"🍗",phoneSMS:"",phoneCall:"",image:null,menus:[{id:"m1",name:"황금올리브 순살",price:21000},{id:"m2",name:"골든오리지날",price:19000}]},
+  {id:"r4",name:"파파존스",emoji:"🍕",phoneSMS:"",phoneCall:"",image:null,menus:[{id:"m1",name:"페퍼로니 피자 L",price:29000},{id:"m2",name:"불고기 피자 L",price:27000}]},
+  {id:"r5",name:"스시로",emoji:"🍣",phoneSMS:"",phoneCall:"",image:null,menus:[{id:"m1",name:"연어 2p",price:3000},{id:"m2",name:"모둠 8p 세트",price:12000}]},
 ];
 
 // ── 상태 ─────────────────────────────────────────────────────────
@@ -99,7 +99,7 @@ let S = {
   popupRestaurantName:"", popupRestaurantEmoji:"", popupRestaurantPhone:"",
   popupNewMenuName:"", popupNewMenuPrice:"",
   popupRestaurantPhoneSMS:"", popupRestaurantPhoneCall:"",
-  popupGroupMenuName:"", popupGroupMenuPrice:"",
+  teamRestaurantOrder:[], // 현재 조의 식당 순서 (docId 배열)
   popupEditMenuId:null, popupEditMenuName:"", popupEditMenuPrice:"",
 };
 
@@ -113,7 +113,7 @@ function initFirebase(){
       S.teams.sort((a,b)=>{const na=parseInt(a.name),nb=parseInt(b.name);return isNaN(na)||isNaN(nb)?a.name.localeCompare(b.name,'ko'):na-nb;});
       if(S.myTeamDocId && !S.myTeam){
         const f=S.teams.find(t=>t.docId===S.myTeamDocId);
-        if(f){S.myTeam=f;S.screen="main";}else S.screen="teamSelect";
+        if(f){S.myTeam=f;S.screen="main";loadRestaurantOrder().then(()=>render());}else S.screen="teamSelect";
       } else if(S.myTeam){
         S.myTeam=S.teams.find(t=>t.docId===S.myTeam.docId)||S.myTeam;
       } else if(S.screen==="loading") S.screen="teamSelect";
@@ -140,6 +140,49 @@ function initFirebase(){
     cleanupExpiredOrders(allDocs);
     render();
   });
+}
+
+// ── 식당 순서 (조별) ─────────────────────────────────────────────
+function getOrderedRestaurants(){
+  if(!S.teamRestaurantOrder || S.teamRestaurantOrder.length===0) return S.restaurants;
+  const ordered = [];
+  S.teamRestaurantOrder.forEach(id=>{
+    const r=S.restaurants.find(r=>r.docId===id);
+    if(r) ordered.push(r);
+  });
+  // 순서에 없는 식당은 뒤에 추가
+  S.restaurants.forEach(r=>{
+    if(!S.teamRestaurantOrder.includes(r.docId)) ordered.push(r);
+  });
+  return ordered;
+}
+
+async function saveRestaurantOrder(order){
+  if(!S.myTeam) return;
+  await setDoc(doc(db,"teamRestaurantOrder",S.myTeam.docId),{order, teamId:S.myTeam.docId});
+  S.teamRestaurantOrder = order;
+}
+
+async function loadRestaurantOrder(){
+  if(!S.myTeam) return;
+  try{
+    const snap = await getDocs(query(collection(db,"teamRestaurantOrder")));
+    const mine = snap.docs.find(d=>d.id===S.myTeam.docId);
+    if(mine) S.teamRestaurantOrder = mine.data().order||[];
+    else S.teamRestaurantOrder = [];
+  }catch(e){S.teamRestaurantOrder=[];}
+}
+
+async function moveRestaurant(docId, dir){
+  const list = getOrderedRestaurants().map(r=>r.docId);
+  const idx = list.indexOf(docId);
+  if(idx===-1) return;
+  if(dir==="up" && idx===0) return;
+  if(dir==="down" && idx===list.length-1) return;
+  const swap = dir==="up" ? idx-1 : idx+1;
+  [list[idx], list[swap]] = [list[swap], list[idx]];
+  await saveRestaurantOrder(list);
+  render();
 }
 
 async function saveDefaultData(){
@@ -210,12 +253,19 @@ async function saveMemberEdit(){
 async function addRestaurant(){
   const name=S.newRestaurantName.trim(); if(!name){showToast("⚠️ 식당 이름 입력");return;}
   const id=`r_${uid()}`;
-  await setDoc(doc(db,"restaurants",id),{id,name,emoji:S.newRestaurantEmoji||"🍽",phoneSMS:"",phoneCall:"",groupMenu:null,image:null,menus:[]});
+  await setDoc(doc(db,"restaurants",id),{id,name,emoji:S.newRestaurantEmoji||"🍽",phoneSMS:"",phoneCall:"",image:null,menus:[]});
   S.newRestaurantName=""; S.newRestaurantEmoji="🍽"; showToast(`✅ ${name} 추가`);
 }
-async function removeRestaurant(docId){
-  if(!confirm("이 식당을 삭제할까요?")) return;
+async function removeRestaurant(docId, name){
+  const first = confirm(`⚠️ "${name}" 식당을 삭제하시겠습니까?\n\n삭제하면 복구할 수 없습니다.`);
+  if(!first) return;
+  const second = confirm(`🚨 정말로 "${name}"을 삭제합니다.\n메뉴 데이터도 모두 사라집니다.\n\n최종 확인: 삭제하시겠습니까?`);
+  if(!second) return;
   await deleteDoc(doc(db,"restaurants",docId));
+  // 순서에서도 제거
+  const newOrder = S.teamRestaurantOrder.filter(id=>id!==docId);
+  if(newOrder.length !== S.teamRestaurantOrder.length) await saveRestaurantOrder(newOrder);
+  showToast(`🗑 ${name} 삭제됨`);
 }
 
 // ── 식당 팝업 ─────────────────────────────────────────────────────
@@ -226,21 +276,6 @@ async function savePopupInfo(){
   showToast("✅ 저장됨");
 }
 
-async function saveGroupMenu(){
-  const r=S.restaurants.find(r=>r.docId===S.restaurantPopup); if(!r) return;
-  const name=S.popupGroupMenuName.trim();
-  const price=parseInt(S.popupGroupMenuPrice);
-  if(!name||isNaN(price)){showToast("⚠️ 단체메뉴명과 가격 입력");return;}
-  await setDoc(doc(db,"restaurants",r.docId),{...r,groupMenu:{name,price}});
-  showToast("✅ 단체메뉴 저장됨");
-}
-
-async function clearGroupMenu(){
-  const r=S.restaurants.find(r=>r.docId===S.restaurantPopup); if(!r) return;
-  await setDoc(doc(db,"restaurants",r.docId),{...r,groupMenu:null});
-  S.popupGroupMenuName=""; S.popupGroupMenuPrice="";
-  showToast("✅ 단체메뉴 삭제됨");
-}
 async function addPopupMenu(){
   const r=S.restaurants.find(r=>r.docId===S.restaurantPopup); if(!r) return;
   const name=S.popupNewMenuName.trim(); const price=parseInt(S.popupNewMenuPrice);
@@ -347,7 +382,8 @@ function bindTeamSelect(){
     btn.onclick=()=>{
       const t=S.teams.find(t=>t.docId===btn.dataset.team);
       S.myTeam=t; S.myTeamDocId=t.docId; localStorage.setItem("myTeamDocId",t.docId);
-      S.screen="main"; render();
+      S.screen="main";
+      loadRestaurantOrder().then(()=>render());
     };
   });
 }
@@ -358,7 +394,8 @@ function renderMain(){
   const selR=getSelR();
   const members=S.myTeam.members||[];
 
-  const rTabs=S.restaurants.map(r=>{
+  const orderedRestaurants = getOrderedRestaurants();
+  const rTabs=orderedRestaurants.map(r=>{
     const active=r.docId===S.selectedRestaurantId; const cnt=countByR(r.name);
     return `<button data-rtab="${r.docId}" style="flex-shrink:0;background:${active?"rgba(108,99,255,0.25)":"rgba(255,255,255,0.04)"};border:2px solid ${active?"rgba(108,99,255,0.8)":"rgba(255,255,255,0.08)"};border-radius:14px;padding:10px 12px;display:flex;flex-direction:column;align-items:center;gap:2px;color:${active?"#c4c0ff":"#606080"};position:relative;transition:all 0.18s;min-width:68px">
       <span style="font-size:22px">${r.emoji}</span>
@@ -517,13 +554,6 @@ function renderMenuSheet(){
       </div>
       <div style="overflow-y:auto;flex:1;padding:0 17px 20px">
         ${r.image?`<img src="${r.image}" style="width:100%;max-height:140px;object-fit:cover;border-radius:12px;display:block;margin-bottom:12px">`:`<div style="background:rgba(255,255,255,0.02);border:1.5px dashed rgba(255,255,255,0.07);border-radius:12px;height:50px;display:flex;align-items:center;justify-content:center;color:#303050;font-size:12px;margin-bottom:12px;gap:6px"><span>🖼</span><span>식단표 이미지 준비 중</span></div>`}
-        ${r.groupMenu?`<button data-menu-group="1" style="background:rgba(255,160,60,0.15);border:2px solid rgba(255,160,60,0.5);border-radius:13px;padding:14px 15px;text-align:left;display:flex;justify-content:space-between;align-items:center;width:100%;margin-bottom:8px">
-          <div style="display:flex;align-items:center;gap:10px">
-            <span style="font-size:16px">🍱</span>
-            <div><div style="font-size:14px;font-weight:800;color:#ffb860">단체메뉴</div><div style="font-size:13px;font-weight:600;color:#e0e0f0;margin-top:1px">${r.groupMenu.name}</div></div>
-          </div>
-          <span style="font-size:15px;font-weight:700;color:#ff9d60;flex-shrink:0">${fmt(r.groupMenu.price)}</span>
-        </button>`:""}
         <div style="display:flex;flex-direction:column;gap:8px">${items}</div>
       </div>
     </div>
@@ -533,7 +563,7 @@ function renderMenuSheet(){
 // ── 라이브보드 (문자보내기 추가) ─────────────────────────────────
 function renderLiveBoard(){
   const ticker=S.allOrders.slice(-10).reverse();
-  const bars=S.restaurants.map(r=>{
+  const bars=getOrderedRestaurants().map(r=>{
     const ro=S.allOrders.filter(o=>o.restaurant===r.name); const total=ro.length;
     const teams=[...new Set(ro.map(o=>o.team))];
     const bw=Math.min((total/15)*100,100);
@@ -595,18 +625,23 @@ function renderSettings(){
     </div>`;
   }).join("");
 
-  const restaurantRows=S.restaurants.map(r=>`
-    <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:12px;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between">
-      <div style="display:flex;align-items:center;gap:9px">
-        <span style="font-size:22px">${r.emoji}</span>
-        <div>
-          <div style="font-size:14px;font-weight:800;color:#fff">${r.name}</div>
-          <div style="font-size:11px;color:#5050a0">${(r.menus||[]).length}개 메뉴${r.phone?` · 📞`:" · 전화없음"}</div>
+  const orderedR = getOrderedRestaurants();
+  const restaurantRows=orderedR.map((r,idx)=>`
+    <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:11px 12px;margin-bottom:7px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+        <div style="display:flex;flex-direction:column;gap:3px;flex-shrink:0">
+          <button data-order-up="${r.docId}" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:5px;width:26px;height:22px;color:#9090c0;font-size:10px;display:flex;align-items:center;justify-content:center;opacity:${idx===0?0.25:1}">▲</button>
+          <button data-order-down="${r.docId}" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:5px;width:26px;height:22px;color:#9090c0;font-size:10px;display:flex;align-items:center;justify-content:center;opacity:${idx===orderedR.length-1?0.25:1}">▼</button>
         </div>
-      </div>
-      <div style="display:flex;gap:6px">
-        <button data-open-popup="${r.docId}" style="background:rgba(108,99,255,0.15);border:1px solid rgba(108,99,255,0.3);border-radius:8px;padding:7px 13px;color:#9d97ff;font-size:12px;font-weight:700">수정</button>
-        <button data-rm-r="${r.docId}" style="background:rgba(255,80,80,0.12);border:1px solid rgba(255,80,80,0.28);border-radius:8px;padding:7px 13px;color:#ff8080;font-size:12px;font-weight:700">삭제</button>
+        <span style="font-size:20px;flex-shrink:0">${r.emoji}</span>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:14px;font-weight:800;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.name}</div>
+          <div style="font-size:11px;color:#5050a0">${(r.menus||[]).length}개 메뉴${(r.phoneSMS||r.phoneCall)?` · 📞`:" · 전화없음"}</div>
+        </div>
+        <div style="display:flex;gap:5px;flex-shrink:0">
+          <button data-open-popup="${r.docId}" style="background:rgba(108,99,255,0.15);border:1px solid rgba(108,99,255,0.3);border-radius:8px;padding:7px 11px;color:#9d97ff;font-size:12px;font-weight:700">수정</button>
+          <button data-rm-r="${r.docId}" data-rm-name="${r.name}" style="background:rgba(255,80,80,0.12);border:1px solid rgba(255,80,80,0.28);border-radius:8px;padding:7px 11px;color:#ff8080;font-size:12px;font-weight:700">삭제</button>
+        </div>
       </div>
     </div>`).join("");
 
@@ -623,7 +658,7 @@ function renderSettings(){
       </div>
       <div style="display:flex;border-bottom:1px solid rgba(255,255,255,0.07);flex-shrink:0">
         <button data-stab="teams" style="flex:1;padding:10px;background:none;border:none;border-bottom:2px solid ${S.settingsTab==="teams"?"#6c63ff":"transparent"};font-size:12px;font-weight:700;color:${S.settingsTab==="teams"?"#9d97ff":"#505070"}">👥 팀원 관리</button>
-        <button data-stab="restaurants" style="flex:1;padding:10px;background:none;border:none;border-bottom:2px solid ${S.settingsTab==="restaurants"?"#6c63ff":"transparent"};font-size:12px;font-weight:700;color:${S.settingsTab==="restaurants"?"#9d97ff":"#505070"}">🏪 식당 관리</button>
+        <button data-stab="restaurants" style="flex:1;padding:10px;background:none;border:none;border-bottom:2px solid ${S.settingsTab==="restaurants"?"#6c63ff":"transparent"};font-size:12px;font-weight:700;color:${S.settingsTab==="restaurants"?"#9d97ff":"#505070"}">🏪 식당·순서 관리</button>
       </div>
       <div style="flex:1;overflow-y:auto;padding:13px 13px 24px">
         ${S.settingsTab==="teams"?`
@@ -710,20 +745,6 @@ function renderRestaurantPopup(){
           <input id="pop-phone-call" value="${S.popupRestaurantPhoneCall}" placeholder="02-0000-0000" type="tel" style="width:100%;height:44px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.13);border-radius:9px;padding:0 12px;color:#e0e0f0;font-size:14px;outline:none"/>
         </div>
         <button id="pop-save-info" style="width:100%;height:46px;background:linear-gradient(135deg,#6c63ff,#9d97ff);border:none;border-radius:10px;color:#fff;font-size:14px;font-weight:800;margin-bottom:14px">저장</button>
-        <!-- 단체메뉴 -->
-        <div style="background:rgba(255,160,60,0.07);border:1px solid rgba(255,160,60,0.2);border-radius:12px;padding:12px;margin-bottom:14px">
-          <div style="font-size:11px;color:#ff9d60;font-weight:700;margin-bottom:7px">🍱 단체메뉴 <span style="color:#604030;font-weight:400">(전체 동일 메뉴 주문 시)</span></div>
-          ${(()=>{const r=S.restaurants.find(r=>r.docId===S.restaurantPopup);const gm=r?.groupMenu;return gm?`
-            <div style="background:rgba(255,160,60,0.12);border:1px solid rgba(255,160,60,0.3);border-radius:9px;padding:10px 13px;display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-              <div><div style="font-size:14px;font-weight:700;color:#fff">${gm.name}</div><div style="font-size:13px;color:#ff9d60;font-weight:700;margin-top:2px">${fmt(gm.price)}</div></div>
-              <button id="pop-clear-group" style="background:rgba(255,80,80,0.15);border:1px solid rgba(255,80,80,0.3);border-radius:8px;padding:6px 12px;color:#ff8080;font-size:12px;font-weight:700">삭제</button>
-            </div>`:``})()}
-          <div style="display:flex;gap:7px;margin-bottom:7px">
-            <input id="pop-group-name" placeholder="단체메뉴 이름" value="${S.popupGroupMenuName}" style="flex:1;height:42px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:9px;padding:0 11px;color:#e0e0f0;font-size:13px;outline:none"/>
-            <input id="pop-group-price" placeholder="가격" type="number" value="${S.popupGroupMenuPrice}" style="width:88px;height:42px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:9px;padding:0 10px;color:#e0e0f0;font-size:13px;outline:none;flex-shrink:0"/>
-          </div>
-          <button id="pop-save-group" style="width:100%;height:42px;background:linear-gradient(135deg,#ff9d60,#ffb880);border:none;border-radius:9px;color:#fff;font-size:13px;font-weight:800">단체메뉴 설정</button>
-        </div>
         <!-- 이미지 -->
         <div style="margin-bottom:14px">
           <div style="font-size:11px;color:#5050a0;font-weight:700;margin-bottom:7px">식단표 이미지</div>
@@ -786,14 +807,6 @@ function bindMenuSheet(){
       await submitOrder(member, menu);
     };
   });
-  // 단체메뉴 버튼
-  document.querySelectorAll("[data-menu-group]").forEach(btn=>{
-    btn.onclick=async()=>{
-      const r=getSelR();
-      const member=S.menuSheet?.member;
-      if(!r?.groupMenu||!member) return;
-      btn.style.background="rgba(255,160,60,0.35)";
-      await submitOrder(member, {id:"group",name:r.groupMenu.name,price:r.groupMenu.price});
     };
   });
 }
@@ -825,13 +838,15 @@ function bindSettings(){
   document.getElementById("inp-remoji")?.addEventListener("input",e=>S.newRestaurantEmoji=e.target.value);
   document.getElementById("inp-rname")?.addEventListener("input",e=>S.newRestaurantName=e.target.value);
   document.getElementById("add-r-btn")?.addEventListener("click",addRestaurant);
-  document.querySelectorAll("[data-rm-r]").forEach(btn=>{btn.onclick=()=>removeRestaurant(btn.dataset.rmR);});
+  document.querySelectorAll("[data-rm-r]").forEach(btn=>{btn.onclick=()=>removeRestaurant(btn.dataset.rmR, btn.dataset.rmName||btn.dataset.rmR);});
+  document.querySelectorAll("[data-order-up]").forEach(btn=>{btn.onclick=()=>moveRestaurant(btn.dataset.orderUp,"up");});
+  document.querySelectorAll("[data-order-down]").forEach(btn=>{btn.onclick=()=>moveRestaurant(btn.dataset.orderDown,"down");});
   document.querySelectorAll("[data-open-popup]").forEach(btn=>{
     btn.onclick=()=>{
       const r=S.restaurants.find(r=>r.docId===btn.dataset.openPopup);
       if(r){S.restaurantPopup=r.docId;S.popupRestaurantName=r.name;S.popupRestaurantEmoji=r.emoji;
         S.popupRestaurantPhoneSMS=r.phoneSMS||"";S.popupRestaurantPhoneCall=r.phoneCall||"";
-        S.popupGroupMenuName=r.groupMenu?.name||"";S.popupGroupMenuPrice=r.groupMenu?.price?String(r.groupMenu.price):"";
+
         S.popupNewMenuName="";S.popupNewMenuPrice="";S.popupEditMenuId=null;render();}
     };
   });
@@ -846,10 +861,7 @@ function bindRestaurantPopup(){
   document.getElementById("pop-phone-call")?.addEventListener("input",e=>S.popupRestaurantPhoneCall=e.target.value);
   document.getElementById("pop-save-info")?.addEventListener("click",savePopupInfo);
   // 단체메뉴
-  document.getElementById("pop-group-name")?.addEventListener("input",e=>S.popupGroupMenuName=e.target.value);
-  document.getElementById("pop-group-price")?.addEventListener("input",e=>S.popupGroupMenuPrice=e.target.value);
-  document.getElementById("pop-save-group")?.addEventListener("click",saveGroupMenu);
-  document.getElementById("pop-clear-group")?.addEventListener("click",clearGroupMenu);
+
   const imgLabel=document.getElementById("popup-img-label");
   const imgInput=document.getElementById("popup-img-input");
   imgLabel?.addEventListener("click",()=>imgInput?.click());
