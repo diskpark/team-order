@@ -24,7 +24,7 @@ input{font-family:inherit;}
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, setDoc, writeBatch, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-const VERSION = "v1.1";
+const VERSION = "v1.2";
 const firebaseConfig = {
   apiKey: "AIzaSyAQzhhO8NbhvUkNOjnjvVJgNNN4vx8KRXU",
   authDomain: "team-order-1cfb0.firebaseapp.com",
@@ -73,6 +73,10 @@ let S = {
   myTeamDocId: localStorage.getItem("myTeamDocId")||null,
   myTeam:null, teams:[], restaurants:[], allOrders:[],
   restaurantOrder:[], // 현재 조의 식당 순서 (docId 배열)
+  recentOrders:[], // 최근 문자 전송 주문 기록 (조별)
+  showRecentOrders:false,
+  recentDetailIdx:null,
+  quickAddMode:false, quickAddName:"",
   selectedRestaurantId:null,
   menuSheet:null, selectedMenu:null,
   liveBoard:false, settings:false, settingsTab:"teams",
@@ -144,6 +148,33 @@ async function saveDefaultData(){
   DEFAULT_TEAMS.forEach(t=>batch.set(doc(db,"teams",t.id),t));
   DEFAULT_RESTAURANTS.forEach(r=>batch.set(doc(db,"restaurants",r.id),r));
   await batch.commit();
+}
+
+// ── 최근 주문 (문자 전송 기록) ───────────────────────────────────
+async function saveRecentOrder(restaurantName, orders){
+  if(!S.myTeam) return;
+  const record = {
+    restaurantName,
+    restaurantEmoji: S.restaurants.find(r=>r.name===restaurantName)?.emoji||"🍽",
+    orders: orders.map(o=>({member:o.member, menu:o.menu, price:o.price})),
+    total: orders.reduce((s,o)=>s+o.price,0),
+    sentAt: new Date().toLocaleString("ko-KR",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"}),
+    date: todayKey(),
+    timestamp: Date.now()
+  };
+  const existing = S.recentOrders;
+  const newList = [record, ...existing].slice(0,10); // 최근 10개
+  S.recentOrders = newList;
+  try{
+    await setDoc(doc(db,"recentOrders",S.myTeam.docId),{orders:newList, teamId:S.myTeam.docId});
+  }catch(e){}
+}
+async function loadRecentOrders(){
+  if(!S.myTeam) return;
+  try{
+    const d = await getDoc(doc(db,"recentOrders",S.myTeam.docId));
+    S.recentOrders = d.exists()?(d.data().orders||[]):[];
+  }catch(e){S.recentOrders=[];}
 }
 
 // ── 식당 순서 ─────────────────────────────────────────────────────
@@ -222,6 +253,8 @@ function sendSMS(restaurantName){
   if(rOrders.length===0){showToast("주문이 없습니다");return;}
   const body=buildSMSBody(rData||{name:restaurantName,emoji:"🍽"},rOrders);
   const phone=(rData?.phoneSMS||"").replace(/[^0-9]/g,"");
+  // 최근 주문 저장
+  saveRecentOrder(restaurantName, rOrders);
   if(phone) window.location.href=`sms:${phone}?body=${encodeURIComponent(body)}`;
   else{ navigator.clipboard?.writeText(body); showToast("📋 문자번호 없음 — 내용 복사됨"); }
 }
@@ -340,7 +373,7 @@ function bindTeamSelect(){
       S.myTeam=t; S.myTeamDocId=t.docId; localStorage.setItem("myTeamDocId",t.docId);
       S.restaurantOrder=[]; S.selectedRestaurantId=null;
       S.screen="main";
-      loadRestaurantOrder().then(()=>{
+      Promise.all([loadRestaurantOrder(), loadRecentOrders()]).then(()=>{
         if(!S.selectedRestaurantId){
           const first=getOrderedRestaurants()[0];
           if(first) S.selectedRestaurantId=first.docId;
@@ -368,16 +401,13 @@ function renderMain(){
     </button>`;
   }).join("");
 
-  const menuPreview=selR?`<div style="padding:7px 13px;background:rgba(108,99,255,0.06);border-bottom:1px solid rgba(255,255,255,0.06);overflow-x:auto;display:flex;gap:6px;align-items:center;flex-shrink:0">
-    <span style="font-size:10px;color:#5050a0;white-space:nowrap;font-weight:700">메뉴</span>
-    ${(selR.menus||[]).map(m=>`<span style="flex-shrink:0;font-size:11px;color:#9090b0;background:rgba(255,255,255,0.05);border-radius:20px;padding:3px 9px;white-space:nowrap">${m.name} <span style="color:#6c63ff;font-weight:700">${fmt(m.price)}</span></span>`).join("")}
-  </div>`:"";
+  const menuPreview=""; // 제거됨
 
   const memberGrid=members.map(m=>{
     const order=getMyOrder(m.name); const done=!!order;
     return `<button data-member="${m.id}" style="background:${done?"rgba(60,200,120,0.12)":"rgba(255,255,255,0.05)"};border:1.5px solid ${done?"rgba(60,200,120,0.4)":"rgba(255,255,255,0.09)"};border-radius:12px;padding:10px 6px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;transition:all 0.15s;width:100%;min-height:64px">
       <div style="font-size:13px;font-weight:800;color:${done?"#60c880":"#d0d0e8"};text-align:center;line-height:1.3;word-break:keep-all">${m.name}</div>
-      ${done?`<div style="font-size:10px;color:#50a870;text-align:center;line-height:1.2;word-break:keep-all;padding:0 2px">${order.menu}</div>`:`<div style="font-size:10px;color:#404060">주문 전</div>`}
+      ${done?`<div style="font-size:10px;color:#50a870;text-align:center;line-height:1.2;word-break:keep-all;padding:0 2px">${order.menu}</div>`:``}
     </button>`;
   }).join("");
 
@@ -448,16 +478,41 @@ function renderMain(){
     <div style="padding:9px 13px 7px;background:rgba(255,255,255,0.02);border-bottom:1px solid rgba(255,255,255,0.06);flex-shrink:0">
       <div style="display:flex;gap:7px;overflow-x:auto;padding-bottom:2px">${rTabs}</div>
     </div>
-    ${menuPreview}
+    <!-- 최근 주문 탭 -->
+    ${S.recentOrders.length>0?`<div style="border-bottom:1px solid rgba(255,255,255,0.06);background:rgba(255,255,255,0.01);flex-shrink:0">
+      <div style="display:flex;align-items:center;gap:0;overflow-x:auto">
+        <button id="recent-toggle" style="flex-shrink:0;background:none;border:none;border-bottom:2px solid ${S.showRecentOrders?"#ff9d60":"transparent"};padding:8px 14px;font-size:11px;font-weight:700;color:${S.showRecentOrders?"#ff9d60":"#505070"};white-space:nowrap;display:flex;align-items:center;gap:5px">
+          📋 최근 주문 <span style="background:rgba(255,157,96,0.2);border-radius:20px;padding:1px 6px;color:#ff9d60;font-size:10px">${S.recentOrders.length}</span>
+        </button>
+        ${S.showRecentOrders?S.recentOrders.map((r,i)=>`<button data-recent="${i}" style="flex-shrink:0;background:rgba(255,255,255,0.04);border:none;border-left:1px solid rgba(255,255,255,0.06);border-bottom:2px solid transparent;padding:8px 12px;font-size:10px;color:#707080;white-space:nowrap;text-align:left">
+          <span style="color:#ff9d60">${r.restaurantEmoji}</span> ${r.restaurantName} <span style="color:#5050a0">${r.sentAt}</span>
+        </button>`).join(""):""}
+      </div>
+    </div>`:""}
     <!-- 컨텐츠 -->
     <div style="flex:1;overflow-y:auto;padding:10px 11px 30px">
       <div style="font-size:10px;color:#5050a0;letter-spacing:1px;margin-bottom:8px;font-weight:700">👥 ${S.myTeam.name} · ${members.length}명${selR?` <span style="color:#6c63ff">· ${selR.emoji} ${selR.name}</span>`:""}</div>
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:7px">${memberGrid}</div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:7px">
+        ${memberGrid}
+        ${S.quickAddMode?`
+        <div style="background:rgba(108,99,255,0.12);border:1.5px solid rgba(108,99,255,0.5);border-radius:12px;padding:8px 6px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;min-height:64px">
+          <input id="quick-add-input" placeholder="이름" value="${S.quickAddName}" autofocus style="width:100%;background:rgba(255,255,255,0.1);border:1px solid rgba(108,99,255,0.4);border-radius:7px;padding:5px 6px;color:#fff;font-size:12px;outline:none;text-align:center"/>
+          <div style="display:flex;gap:4px;width:100%">
+            <button id="quick-add-confirm" style="flex:1;background:linear-gradient(135deg,#6c63ff,#9d97ff);border:none;border-radius:6px;padding:4px 0;color:#fff;font-size:11px;font-weight:700">추가</button>
+            <button id="quick-add-cancel" style="flex:1;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:4px 0;color:#9090c0;font-size:11px">취소</button>
+          </div>
+        </div>`:`
+        <button id="add-member-quick" style="background:rgba(108,99,255,0.08);border:1.5px dashed rgba(108,99,255,0.3);border-radius:12px;padding:10px 6px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-height:64px;transition:all 0.15s">
+          <div style="font-size:20px;color:#6c63ff">+</div>
+          <div style="font-size:10px;color:#5050a0;font-weight:700">인원추가</div>
+        </button>`}
+      </div>
       ${myOrders.length>0?`<div style="display:flex;justify-content:center;margin-top:14px"><button id="reset-btn" style="background:rgba(255,80,80,0.1);border:1px solid rgba(255,80,80,0.25);border-radius:20px;padding:8px 24px;font-size:12px;color:#ff8080;font-weight:700">🗑 주문 초기화</button></div>`:""}
       ${summaryHTML}
     </div>
   </div>
   ${S.menuSheet?renderMenuSheet():""}
+  ${S.recentDetailIdx!==null?renderRecentOrderDetail(S.recentDetailIdx):""}
   ${S.liveBoard?renderLiveBoard():""}
   ${S.settings?renderSettings():""}
   ${S.restaurantPopup?renderRestaurantPopup():""}
@@ -499,6 +554,25 @@ function renderMenuSheet(){
         ${r.image?`<img src="${r.image}" style="width:100%;max-height:110px;object-fit:cover;border-radius:12px;display:block;margin-bottom:10px">`:`<div style="background:rgba(255,255,255,0.02);border:1.5px dashed rgba(255,255,255,0.07);border-radius:12px;height:40px;display:flex;align-items:center;justify-content:center;color:#303050;font-size:11px;margin-bottom:10px;gap:5px"><span>🖼</span><span>식단표 이미지 준비 중</span></div>`}
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">${items}</div>
       </div>
+    </div>
+  </div>`;
+}
+
+// ── 최근 주문 상세 팝업 ──────────────────────────────────────────
+function renderRecentOrderDetail(idx){
+  const r = S.recentOrders[idx]; if(!r) return "";
+  return `<div style="position:fixed;inset:0;z-index:150;display:flex;align-items:flex-start;justify-content:center;padding:60px 16px 16px">
+    <div id="recent-detail-bg" style="position:absolute;inset:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(5px)"></div>
+    <div style="position:relative;z-index:1;background:#16162e;border:1px solid rgba(255,255,255,0.12);border-radius:18px;width:100%;max-width:400px;padding:16px;animation:popIn 0.2s ease">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div><div style="font-size:15px;font-weight:900;color:#fff">${r.restaurantEmoji} ${r.restaurantName}</div><div style="font-size:11px;color:#5050a0;margin-top:2px">${r.sentAt} · ${r.orders.length}명</div></div>
+        <button id="recent-detail-close" style="background:rgba(255,255,255,0.07);border:none;border-radius:50%;width:28px;height:28px;color:#9090c0;font-size:13px;display:flex;align-items:center;justify-content:center">✕</button>
+      </div>
+      ${r.orders.map(o=>`<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.05);font-size:13px">
+        <span style="color:#e0e0f0;font-weight:600">${o.member}</span>
+        <span style="color:#9090b0">${o.menu} <span style="color:#9d97ff;font-weight:700">${fmt(o.price)}</span></span>
+      </div>`).join("")}
+      <div style="text-align:right;font-size:13px;font-weight:800;color:#fff;margin-top:10px">합계: <span style="color:#9d97ff">${fmt(r.total)}</span></div>
     </div>
   </div>`;
 }
@@ -713,6 +787,29 @@ function bindMain(){
   document.querySelectorAll("[data-delete]").forEach(btn=>{btn.onclick=async()=>{await deleteDoc(doc(db,"orders",btn.dataset.delete));};});
   document.querySelectorAll("[data-sms-main]").forEach(btn=>{btn.onclick=()=>sendSMS(btn.dataset.smsMain);});
   document.querySelectorAll("[data-call-main]").forEach(btn=>{btn.onclick=()=>callRestaurant(btn.dataset.callMain);});
+
+  // 최근 주문 탭
+  document.getElementById("recent-toggle")?.addEventListener("click",()=>{S.showRecentOrders=!S.showRecentOrders;render();});
+  document.querySelectorAll("[data-recent]").forEach(btn=>{
+    btn.onclick=()=>{S.recentDetailIdx=parseInt(btn.dataset.recent);render();};
+  });
+  document.getElementById("recent-detail-bg")?.addEventListener("click",()=>{S.recentDetailIdx=null;render();});
+  document.getElementById("recent-detail-close")?.addEventListener("click",()=>{S.recentDetailIdx=null;render();});
+
+  // 인원 빠른 추가
+  document.getElementById("add-member-quick")?.addEventListener("click",()=>{S.quickAddMode=true;S.quickAddName="";render();setTimeout(()=>document.getElementById("quick-add-input")?.focus(),50);});
+  document.getElementById("quick-add-cancel")?.addEventListener("click",()=>{S.quickAddMode=false;S.quickAddName="";render();});
+  document.getElementById("quick-add-input")?.addEventListener("input",e=>S.quickAddName=e.target.value);
+  document.getElementById("quick-add-input")?.addEventListener("keydown",e=>{if(e.key==="Enter")document.getElementById("quick-add-confirm")?.click();if(e.key==="Escape"){S.quickAddMode=false;render();}});
+  document.getElementById("quick-add-confirm")?.addEventListener("click",async()=>{
+    const name=S.quickAddName.trim(); if(!name) return;
+    const t=S.myTeam;
+    const no=(t.members||[]).length+1;
+    const nm=[...(t.members||[]),{id:uid(),no,name}];
+    await setDoc(doc(db,"teams",t.docId),{...t,members:nm});
+    S.quickAddMode=false; S.quickAddName="";
+    showToast(`✅ ${name} 추가`);
+  });
 }
 function bindMenuSheet(){
   document.getElementById("ms-bg")?.addEventListener("click",()=>{S.menuSheet=null;S.selectedMenu=null;render();});
