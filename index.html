@@ -14,6 +14,7 @@ input{font-family:inherit;}
 @keyframes marquee{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
 @keyframes fadeUp{from{opacity:0;transform:translateX(-50%) translateY(10px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
 @keyframes slideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
+@keyframes slideDown{from{transform:translateY(-100%)}to{transform:translateY(0)}}
 @keyframes popIn{from{opacity:0;transform:scale(0.93)}to{opacity:1;transform:scale(1)}}
 </style>
 </head>
@@ -23,7 +24,7 @@ input{font-family:inherit;}
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, setDoc, writeBatch, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-const VERSION = "v1.0";
+const VERSION = "v1.1";
 const firebaseConfig = {
   apiKey: "AIzaSyAQzhhO8NbhvUkNOjnjvVJgNNN4vx8KRXU",
   authDomain: "team-order-1cfb0.firebaseapp.com",
@@ -39,9 +40,9 @@ const todayKey = () => new Date().toISOString().slice(0,10);
 const fmt = p => Number(p).toLocaleString()+"원";
 const fmtShort = p => {
   const n = Number(p);
-  if(n >= 10000) return Math.floor(n/1000)+"k";  // 12000 → 12k
-  if(n >= 1000) return (n/1000).toFixed(1).replace('.0','')+"k"; // 8500 → 8.5k
-  return n+"";
+  if(n >= 10000) return Math.floor(n/1000);       // 12000 → 12
+  if(n >= 1000) return (n/1000).toFixed(1).replace('.0',''); // 8500 → 8.5
+  return n;
 };
 const uid = () => `${Date.now()}_${Math.random().toString(36).slice(2,7)}`;
 const makeMembers = names => names.map((n,i)=>({id:uid(),no:i+1,name:n}));
@@ -374,10 +375,9 @@ function renderMain(){
 
   const memberGrid=members.map(m=>{
     const order=getMyOrder(m.name); const done=!!order;
-    return `<button data-member="${m.id}" style="background:${done?"rgba(60,200,120,0.12)":"rgba(255,255,255,0.05)"};border:1.5px solid ${done?"rgba(60,200,120,0.4)":"rgba(255,255,255,0.09)"};border-radius:12px;padding:10px 4px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;transition:all 0.15s;width:100%;aspect-ratio:1">
-      <div style="font-size:${done?16:13}px">${done?"✓":"👤"}</div>
-      <div style="font-size:11px;font-weight:700;color:${done?"#60c880":"#d0d0e8"};text-align:center;line-height:1.2;word-break:keep-all;padding:0 2px">${m.name}</div>
-      ${done?`<div style="font-size:9px;color:#50a870">${order.restaurantEmoji}</div>`:""}
+    return `<button data-member="${m.id}" style="background:${done?"rgba(60,200,120,0.12)":"rgba(255,255,255,0.05)"};border:1.5px solid ${done?"rgba(60,200,120,0.4)":"rgba(255,255,255,0.09)"};border-radius:12px;padding:10px 6px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;transition:all 0.15s;width:100%;min-height:64px">
+      <div style="font-size:13px;font-weight:800;color:${done?"#60c880":"#d0d0e8"};text-align:center;line-height:1.3;word-break:keep-all">${m.name}</div>
+      ${done?`<div style="font-size:10px;color:#50a870;text-align:center;line-height:1.2;word-break:keep-all;padding:0 2px">${order.menu}</div>`:`<div style="font-size:10px;color:#404060">주문 전</div>`}
     </button>`;
   }).join("");
 
@@ -452,7 +452,7 @@ function renderMain(){
     <!-- 컨텐츠 -->
     <div style="flex:1;overflow-y:auto;padding:10px 11px 30px">
       <div style="font-size:10px;color:#5050a0;letter-spacing:1px;margin-bottom:8px;font-weight:700">👥 ${S.myTeam.name} · ${members.length}명${selR?` <span style="color:#6c63ff">· ${selR.emoji} ${selR.name}</span>`:""}</div>
-      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:7px">${memberGrid}</div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:7px">${memberGrid}</div>
       ${myOrders.length>0?`<div style="display:flex;justify-content:center;margin-top:14px"><button id="reset-btn" style="background:rgba(255,80,80,0.1);border:1px solid rgba(255,80,80,0.25);border-radius:20px;padding:8px 24px;font-size:12px;color:#ff8080;font-weight:700">🗑 주문 초기화</button></div>`:""}
       ${summaryHTML}
     </div>
@@ -480,13 +480,13 @@ function renderMenuSheet(){
     ">
       ${active?`<div style="position:absolute;top:6px;right:6px;width:14px;height:14px;border-radius:50%;background:#6c63ff;display:flex;align-items:center;justify-content:center;font-size:9px;color:#fff">✓</div>`:""}
       <div style="font-size:22px;font-weight:900;color:${active?"#9d97ff":"#b0b0d0"};line-height:1">${fmtShort(menu.price)}</div>
-      <div style="font-size:11px;font-weight:700;color:${active?"#c4c0ff":"#d0d0e8"};text-align:center;line-height:1.3;word-break:keep-all;padding:0 2px">${menu.name}</div>
+      <div style="font-size:13px;font-weight:700;color:${active?"#c4c0ff":"#d0d0e8"};text-align:center;line-height:1.3;word-break:keep-all;padding:0 2px">${menu.name}</div>
     </button>`;
   }).join("");
-  return `<div style="position:fixed;inset:0;z-index:100;display:flex;flex-direction:column;justify-content:flex-end">
+  return `<div style="position:fixed;inset:0;z-index:100;display:flex;flex-direction:column;justify-content:flex-start">
     <div id="ms-bg" style="position:absolute;inset:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(5px)"></div>
-    <div style="position:relative;z-index:1;background:#13132a;border:1px solid rgba(255,255,255,0.1);border-radius:24px 24px 0 0;max-height:80vh;display:flex;flex-direction:column;overflow:hidden;animation:slideUp 0.25s ease">
-      <div style="padding:12px 0 0;display:flex;justify-content:center;flex-shrink:0"><div style="width:36px;height:4px;border-radius:2px;background:rgba(255,255,255,0.15)"></div></div>
+    <div style="position:relative;z-index:1;background:#13132a;border:1px solid rgba(255,255,255,0.1);border-radius:0 0 24px 24px;max-height:82vh;display:flex;flex-direction:column;overflow:hidden;animation:slideDown 0.25s ease">
+      <div style="padding:0 0 10px;display:flex;justify-content:center;flex-shrink:0;order:99"><div style="width:36px;height:4px;border-radius:2px;background:rgba(255,255,255,0.15);margin-top:8px"></div></div>
       <div style="padding:13px 17px 10px;flex-shrink:0;display:flex;align-items:center;justify-content:space-between">
         <div>
           <div style="font-size:18px;font-weight:900;color:#fff">${r.emoji} ${r.name}</div>
@@ -582,7 +582,7 @@ function renderSettings(){
   return `<div style="position:fixed;inset:0;z-index:300;display:flex;flex-direction:column;justify-content:flex-end">
     <div id="st-bg" style="position:absolute;inset:0;background:rgba(0,0,0,0.75);backdrop-filter:blur(6px)"></div>
     <div style="position:relative;z-index:1;background:#10101f;border:1px solid rgba(255,255,255,0.1);border-radius:24px 24px 0 0;height:88vh;display:flex;flex-direction:column;overflow:hidden;animation:slideUp 0.3s ease">
-      <div style="padding:12px 0 0;display:flex;justify-content:center;flex-shrink:0"><div style="width:36px;height:4px;border-radius:2px;background:rgba(255,255,255,0.15)"></div></div>
+      <div style="padding:0 0 10px;display:flex;justify-content:center;flex-shrink:0;order:99"><div style="width:36px;height:4px;border-radius:2px;background:rgba(255,255,255,0.15);margin-top:8px"></div></div>
       <div style="padding:10px 15px 9px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;border-bottom:1px solid rgba(255,255,255,0.07)">
         <div style="font-size:16px;font-weight:900;color:#fff">⚙️ 설정</div>
         <div style="display:flex;align-items:center;gap:7px">
