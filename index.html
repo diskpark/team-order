@@ -536,50 +536,68 @@ function renderMain(){
   ${S.toast?`<div style="position:fixed;bottom:30px;left:50%;transform:translateX(-50%);background:rgba(20,20,50,0.97);backdrop-filter:blur(8px);border:1px solid rgba(108,99,255,0.4);border-radius:50px;padding:10px 20px;font-size:13px;font-weight:700;color:#fff;z-index:600;white-space:nowrap;animation:fadeUp 0.2s ease">${S.toast}</div>`:""}`;
 }
 
-// ── 메뉴 시트 ────────────────────────────────────────────────────
+// ── 메뉴 시트 (탭1:인기순 / 탭2:이름순, 최근주문 3개 상단) ────────
 function renderMenuSheet(){
   const r=getSelR(); if(!r) return "";
-  const m=S.menuSheet.member;
-  const existing=getMyOrder(m.name);
-  // 주문량 많은 순 정렬
-  const menuOrderCounts={};
-  S.allOrders.filter(o=>o.restaurant===r.name).forEach(o=>{
-    menuOrderCounts[o.menu]=(menuOrderCounts[o.menu]||0)+1;
-  });
-  const sortedMenus=[...(r.menus||[])].sort((a,b)=>(menuOrderCounts[b.name]||0)-(menuOrderCounts[a.name]||0));
+  const member=S.menuSheet.member;
+  const existing=getMyOrder(member.name);
 
-  const items=sortedMenus.map(menu=>{
+  // 전체 조 주문량
+  const menuCounts={};
+  S.allOrders.filter(o=>o.restaurant===r.name).forEach(o=>{menuCounts[o.menu]=(menuCounts[o.menu]||0)+1;});
+
+  // 이 팀원의 최근 주문 3개
+  const myRecent=S.recentOrders
+    .filter(ro=>ro.restaurantName===r.name)
+    .flatMap(ro=>ro.orders.filter(o=>o.member===member.name))
+    .slice(0,3);
+
+  // 탭에 따라 정렬
+  const popularMenus=[...(r.menus||[])].sort((a,b)=>(menuCounts[b.name]||0)-(menuCounts[a.name]||0));
+  const alphaMenus=[...(r.menus||[])].sort((a,b)=>a.name.localeCompare(b.name,'ko'));
+  const displayMenus=S.menuSheetTab==="popular"?popularMenus:alphaMenus;
+
+  const menuCard=(menu)=>{
     const active=S.selectedMenu?.id===menu.id;
-    return `<button data-menu="${menu.id}" style="
-      background:${active?"rgba(108,99,255,0.28)":"rgba(255,255,255,0.05)"};
-      border:2px solid ${active?"rgba(108,99,255,0.8)":"rgba(255,255,255,0.09)"};
-      border-radius:14px;padding:12px 8px;
-      display:flex;flex-direction:column;align-items:center;justify-content:center;
-      gap:6px;width:100%;transition:all 0.12s;position:relative;
-    ">
-      ${active?`<div style="position:absolute;top:6px;right:6px;width:14px;height:14px;border-radius:50%;background:#6c63ff;display:flex;align-items:center;justify-content:center;font-size:9px;color:#fff">✓</div>`:""}
-      <div style="display:flex;align-items:center;gap:4px;justify-content:center">
-        <div style="font-size:22px;font-weight:900;color:${active?"#9d97ff":"#b0b0d0"};line-height:1">${fmtShort(menu.price)}</div>
-        ${menuOrderCounts[menu.name]?`<span style="font-size:9px;background:#ff6b6b;border-radius:20px;padding:1px 5px;color:#fff;font-weight:800">${menuOrderCounts[menu.name]}</span>`:""}
-      </div>
+    const cnt=menuCounts[menu.name]||0;
+    return `<button data-menu="${menu.id}" style="background:${active?"rgba(108,99,255,0.28)":"rgba(255,255,255,0.05)"};border:2px solid ${active?"rgba(108,99,255,0.8)":"rgba(255,255,255,0.09)"};border-radius:14px;padding:11px 7px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;width:100%;position:relative;min-height:70px">
+      ${active?`<div style="position:absolute;top:5px;right:5px;width:13px;height:13px;border-radius:50%;background:#6c63ff;display:flex;align-items:center;justify-content:center;font-size:8px;color:#fff">✓</div>`:""}
       <div style="font-size:${S.fontSizes.menu}px;font-weight:700;color:${active?"#c4c0ff":"#d0d0e8"};text-align:center;line-height:1.3;word-break:keep-all;padding:0 2px">${menu.name}</div>
-    </button>`;
-  }).join("");
-  return `<div style="position:fixed;inset:0;z-index:100;display:flex;flex-direction:column;justify-content:flex-start">
-    <div id="ms-bg" style="position:absolute;inset:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(5px)"></div>
-    <div style="position:relative;z-index:1;background:#13132a;border:1px solid rgba(255,255,255,0.1);border-radius:0 0 24px 24px;max-height:82vh;display:flex;flex-direction:column;overflow:hidden;animation:slideDown 0.25s ease">
-      <div style="padding:0 0 10px;display:flex;justify-content:center;flex-shrink:0;order:99"><div style="width:36px;height:4px;border-radius:2px;background:rgba(255,255,255,0.15);margin-top:8px"></div></div>
-      <div style="padding:13px 17px 10px;flex-shrink:0;display:flex;align-items:center;justify-content:space-between">
-        <div>
-          <div style="font-size:18px;font-weight:900;color:#fff">${r.emoji} ${r.name}</div>
-          <div style="font-size:12px;color:#6060a0;margin-top:2px">👤 ${m.name}${existing?` <span style="color:#ff9d60">· 현재: ${existing.menu}</span>`:""}</div>
-          <div style="font-size:11px;color:#5050a0;margin-top:3px">메뉴를 탭하면 바로 주문됩니다</div>
-        </div>
-        <button id="ms-close" style="background:rgba(255,255,255,0.07);border:none;border-radius:50%;width:31px;height:31px;color:#9090c0;font-size:14px;display:flex;align-items:center;justify-content:center">✕</button>
+      <div style="display:flex;align-items:center;gap:3px">
+        <span style="font-size:20px;font-weight:900;color:${active?"#9d97ff":"#b0b0d0"}">${fmtShort(menu.price)}</span>
+        ${cnt>0?`<span style="font-size:8px;background:#ff6b6b;border-radius:20px;padding:1px 4px;color:#fff;font-weight:800">${cnt}</span>`:""}
       </div>
-      <div style="overflow-y:auto;flex:1;padding:0 17px 20px">
-        ${r.image?`<img src="${r.image}" style="width:100%;max-height:110px;object-fit:cover;border-radius:12px;display:block;margin-bottom:10px">`:`<div style="background:rgba(255,255,255,0.02);border:1.5px dashed rgba(255,255,255,0.07);border-radius:12px;height:40px;display:flex;align-items:center;justify-content:center;color:#303050;font-size:11px;margin-bottom:10px;gap:5px"><span>🖼</span><span>식단표 이미지 준비 중</span></div>`}
-        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">${items}</div>
+    </button>`;
+  };
+
+  return `<div style="position:fixed;inset:0;z-index:100;display:flex;flex-direction:column;justify-content:flex-start">
+    <div id="ms-bg" style="position:absolute;inset:0;background:rgba(0,0,0,0.72);backdrop-filter:blur(5px)"></div>
+    <div style="position:relative;z-index:1;background:#13132a;border-bottom:1px solid rgba(255,255,255,0.1);border-radius:0 0 22px 22px;max-height:82vh;display:flex;flex-direction:column;overflow:hidden;animation:slideDown 0.25s ease">
+      <!-- 헤더 -->
+      <div style="padding:12px 15px 8px;flex-shrink:0;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,0.07)">
+        <div>
+          <div style="font-size:16px;font-weight:900;color:#fff">${r.emoji} ${r.name}</div>
+          <div style="font-size:11px;color:#6060a0;margin-top:1px">👤 ${member.name}${existing?` <span style="color:#ff9d60">· ${existing.menu}</span>`:""} · 탭하면 바로 주문</div>
+        </div>
+        <button id="ms-close" style="background:rgba(255,255,255,0.07);border:none;border-radius:50%;width:30px;height:30px;color:#9090c0;font-size:13px;display:flex;align-items:center;justify-content:center">✕</button>
+      </div>
+      <!-- 최근 주문 3개 -->
+      ${myRecent.length>0?`<div style="padding:7px 13px 8px;background:rgba(255,157,60,0.06);border-bottom:1px solid rgba(255,157,60,0.15);flex-shrink:0">
+        <div style="font-size:10px;color:#ff9d60;font-weight:700;margin-bottom:6px">🕐 내 최근 주문</div>
+        <div style="display:flex;gap:6px">
+          ${myRecent.map(o=>{const mObj=r.menus?.find(m=>m.name===o.menu);return `<button data-menu-recent="${mObj?.id||''}" data-menu-name="${o.menu}" style="flex:1;background:rgba(255,157,60,0.12);border:1.5px solid rgba(255,157,60,0.3);border-radius:10px;padding:7px 5px;text-align:center;min-width:0"><div style="font-size:11px;font-weight:700;color:#ff9d60;line-height:1.3;word-break:keep-all">${o.menu}</div><div style="font-size:12px;font-weight:800;color:#ffb860;margin-top:3px">${fmtShort(o.price||mObj?.price||0)}</div></button>`;}).join("")}
+        </div>
+      </div>`:""}
+      <!-- 탭 -->
+      <div style="display:flex;border-bottom:1px solid rgba(255,255,255,0.07);flex-shrink:0">
+        <button data-menu-tab="popular" style="flex:1;padding:9px;background:none;border:none;border-bottom:2px solid ${S.menuSheetTab==="popular"?"#6c63ff":"transparent"};font-size:12px;font-weight:700;color:${S.menuSheetTab==="popular"?"#9d97ff":"#505070"}">🔥 인기순</button>
+        <button data-menu-tab="alpha" style="flex:1;padding:9px;background:none;border:none;border-bottom:2px solid ${S.menuSheetTab==="alpha"?"#6c63ff":"transparent"};font-size:12px;font-weight:700;color:${S.menuSheetTab==="alpha"?"#9d97ff":"#505070"}">가나다순</button>
+      </div>
+      <!-- 메뉴 그리드 -->
+      <div style="overflow-y:auto;flex:1;padding:10px 13px 16px">
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
+          ${displayMenus.map(m=>menuCard(m)).join("")}
+        </div>
       </div>
     </div>
   </div>`;
