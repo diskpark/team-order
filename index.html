@@ -24,7 +24,7 @@ input{font-family:inherit;}
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, setDoc, writeBatch, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-const VERSION = "v3.1";
+const VERSION = "v3.2";
 const firebaseConfig = {
   apiKey: "AIzaSyAQzhhO8NbhvUkNOjnjvVJgNNN4vx8KRXU",
   authDomain: "team-order-1cfb0.firebaseapp.com",
@@ -312,14 +312,6 @@ async function submitOrder(member,menu){
     const newRef=doc(collection(db,"orders")); b.set(newRef,order);
     await b.commit();
     S.menuSheet=null; S.selectedMenu=null; S.multiSelect=false; S.selectedMenus=[];
-    // 주문 완료 후 합석(지게차) 주문 + 요청 자동 삭제
-    const accReqs=S.joinRequests.filter(r=>r.toTeamId===S.myTeam.docId&&r.status==="accepted"&&r.date===todayKey());
-    if(accReqs.length>0){
-      const cb=writeBatch(db);
-      S.allOrders.filter(o=>o.team===S.myTeam.name&&o.joinRequestId).forEach(o=>cb.delete(doc(db,"orders",o.docId)));
-      accReqs.forEach(r=>cb.delete(doc(db,"joinRequests",r.docId)));
-      cb.commit().catch(()=>{});
-    }
     showToast(`✅ ${member.name} · ${menu.name}`);
   }catch(e){showToast("❌ 저장 실패");}
 }
@@ -440,9 +432,14 @@ async function savePhoneBookEdit(){
 async function sendJoinRequest(targetTeamDocId){
   const target=S.teams.find(t=>t.docId===targetTeamDocId);
   if(!target||!S.myTeam) return;
-  // 이미 pending 요청 있는지 확인
-  const existing=S.joinRequests.find(r=>r.fromTeamId===S.myTeam.docId&&r.status==="pending"&&r.date===todayKey());
-  if(existing){showToast("⚠️ 이미 요청 중입니다");return;}
+  // 이미 요청(pending/accepted) 있는지 확인
+  const existing=S.joinRequests.find(r=>r.fromTeamId===S.myTeam.docId&&r.date===todayKey());
+  if(existing){
+    const statusText=existing.status==="accepted"?"수락된":"대기 중인";
+    if(!confirm(`⚠️ 이미 ${statusText} 합석 요청이 있습니다.\n\n기존: ${existing.toTeamName}\n\n새로 토스하면 기존 요청이 취소되고\n${target.name}에 다시 전송됩니다.\n\n계속하시겠습니까?`)) return;
+    // 기존 요청 삭제
+    await deleteDoc(doc(db,"joinRequests",existing.docId));
+  }
   // 현재 주문된 내역 수집
   const myOrdersNow=S.allOrders.filter(o=>o.team===S.myTeam.name);
   if(myOrdersNow.length===0){showToast("⚠️ 주문 내역이 없습니다. 먼저 주문하세요");return;}
@@ -725,26 +722,24 @@ function renderMain(){
         if(!menuQty[o.menu])menuQty[o.menu]={name:o.menu,price:o.price,count:0};
         menuQty[o.menu].count++;
       });
-      const chips=Object.values(menuQty).map(mq=>
-        '<div style="background:rgba(255,157,60,0.2);border:1.5px solid rgba(255,157,60,0.5);border-radius:10px;padding:8px 10px;display:flex;flex-direction:column;align-items:center;gap:3px;min-width:78px">'
-        +'<div style="font-size:12px;font-weight:800;color:#ffb860;text-align:center;word-break:keep-all">'+mq.name+'</div>'
-        +'<div style="font-size:12px;font-weight:900;color:#ff9d60">'+fmt(mq.price)+'</div>'
-        +(mq.count>1?'<div style="background:#ff9d60;border-radius:20px;padding:1px 7px;font-size:10px;color:#fff;font-weight:800">×'+mq.count+'</div>':'')
-        +'</div>'
-      ).join("");
-      return `<div style="width:100%;grid-column:1/-1;margin-top:8px">
-        <div style="background:linear-gradient(135deg,rgba(255,120,30,0.2),rgba(255,180,60,0.1));border:2.5px solid rgba(255,157,60,0.8);border-radius:16px;padding:13px 14px;box-shadow:0 0 20px rgba(255,157,60,0.2)">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-            <div style="display:flex;align-items:center;gap:8px">
-              <div style="background:rgba(255,157,60,0.35);border-radius:20px;padding:3px 10px;font-size:11px;font-weight:800;color:#ffb860">🤝 합석</div>
-              <span style="font-size:16px;font-weight:900;color:#ffb860">${m.name}</span>
-              <span style="font-size:11px;color:#a06040;background:rgba(255,157,60,0.15);border-radius:20px;padding:2px 7px">${guestOrders.length}명</span>
-            </div>
-            <span style="font-size:17px;font-weight:900;color:#ffb860">${fmt(guestTotal)}</span>
-          </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap">${chips}</div>
-        </div>
-      </div>`;
+      // 각 메뉴를 개별 카드로 - 배경만 다르게
+      return Object.values(menuQty).map(mq=>{
+        // 총무라면 수정 가능한 카드
+        const editBtns=S.chiefMode
+          ?'<div style="display:flex;gap:4px;margin-top:4px">'
+            +'<button data-guest-minus="'+m.teamName+'" data-guest-menu="'+mq.name+'" style="background:rgba(255,157,60,0.2);border:1px solid rgba(255,157,60,0.4);border-radius:6px;width:22px;height:22px;color:#ff9d60;font-size:14px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0">−</button>'
+            +'<button data-guest-plus="'+m.teamName+'" data-guest-menu="'+mq.name+'" data-guest-price="'+mq.price+'" style="background:rgba(255,157,60,0.2);border:1px solid rgba(255,157,60,0.4);border-radius:6px;width:22px;height:22px;color:#ff9d60;font-size:14px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0">+</button>'
+            +'</div>'
+          :'';
+        return '<div style="position:relative;width:100%">'
+          +'<div style="background:rgba(255,157,60,0.1);border:1.5px solid rgba(255,157,60,0.45);border-radius:12px;padding:10px 7px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-height:64px">'
+          +(mq.count>1?'<div style="position:absolute;top:5px;right:5px;background:#ff9d60;border-radius:50%;width:16px;height:16px;font-size:9px;color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center">'+mq.count+'</div>':'')
+          +'<div style="position:absolute;top:4px;left:5px;font-size:8px;color:#ff9d60;font-weight:700">🤝</div>'
+          +'<div style="font-size:${S.fontSizes.member}px;font-weight:700;color:#ffb860;text-align:center;line-height:1.3;word-break:keep-all;padding:0 2px">'+mq.name+'</div>'
+          +'<div style="font-size:12px;font-weight:900;color:#ff9d60">'+fmt(mq.price)+'</div>'
+          +editBtns
+          +'</div></div>';
+      }).join("");
     }
     // ── 일반 팀원 카드 ──
     const order=getMyOrder(m.name); const done=!!order;
@@ -1821,6 +1816,33 @@ function bindMain(){
     };
   });
   document.querySelectorAll("[data-delete]").forEach(btn=>{btn.onclick=async()=>{await deleteDoc(doc(db,"orders",btn.dataset.delete));};});
+  // 지게차(합석) 메뉴 수정 (총무 전용)
+  document.querySelectorAll("[data-guest-minus]").forEach(btn=>{
+    btn.onclick=async(e)=>{
+      e.stopPropagation();
+      const teamName=btn.dataset.guestMinus;
+      const menuName=btn.dataset.guestMenu;
+      const orders=S.allOrders.filter(o=>o.guestTeam===teamName&&o.team===S.myTeam.name&&o.menu===menuName);
+      if(orders.length===0) return;
+      await deleteDoc(doc(db,"orders",orders[0].docId));
+    };
+  });
+  document.querySelectorAll("[data-guest-plus]").forEach(btn=>{
+    btn.onclick=async(e)=>{
+      e.stopPropagation();
+      const teamName=btn.dataset.guestPlus;
+      const menuName=btn.dataset.guestMenu;
+      const price=parseInt(btn.dataset.guestPrice)||0;
+      const jr=S.joinRequests.find(r=>r.fromTeamName===teamName&&r.toTeamId===S.myTeam.docId&&r.status==="accepted");
+      const at=new Date().toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit"});
+      await addDoc(collection(db,"orders"),{
+        team:S.myTeam.name, member:teamName, restaurant:S.allOrders.find(o=>o.guestTeam===teamName)?.restaurant||"",
+        restaurantEmoji:S.allOrders.find(o=>o.guestTeam===teamName)?.restaurantEmoji||"",
+        menu:menuName, price, at, date:todayKey(), timestamp:Date.now(),
+        guestTeam:teamName, joinRequestId:jr?.docId||""
+      });
+    };
+  });
   document.querySelectorAll("[data-settlement]").forEach(btn=>{
     btn.onclick=()=>{S.showSettlement=btn.dataset.settlement;render();};
   });
