@@ -24,7 +24,7 @@ input{font-family:inherit;}
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, setDoc, writeBatch, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-const VERSION = "v4.4";
+const VERSION = "v4.5";
 const firebaseConfig = {
   apiKey: "AIzaSyAQzhhO8NbhvUkNOjnjvVJgNNN4vx8KRXU",
   authDomain: "team-order-1cfb0.firebaseapp.com",
@@ -765,7 +765,7 @@ function renderMain(){
         <span style="font-size:${S.fontSizes.restaurant}px;font-weight:700;white-space:nowrap">${r.name}</span>
         ${active?`<div style="display:flex;gap:4px;margin-top:1px;align-items:center;flex-wrap:wrap;justify-content:center">
           <div data-show-menu="${r.docId}" style="background:rgba(108,99,255,0.35);border-radius:8px;padding:2px 8px;font-size:9px;color:#c4c0ff;font-weight:700;cursor:pointer">메뉴보기</div>
-          ${S.chiefMode?'<div data-chief-pick="'+r.docId+'" style="background:rgba(255,200,60,0.3);border-radius:8px;padding:2px 7px;font-size:9px;color:#ffd060;font-weight:700;cursor:pointer">⭐앞으로</div>':""}
+          ${S.chiefMode?'<div data-chief-pick="'+r.docId+'" style="background:rgba(255,200,60,0.3);border-radius:8px;padding:2px 7px;font-size:9px;color:#ffd060;font-weight:700;cursor:pointer">⭐오늘식당</div>':""}
           ${S.chiefMode?'<div data-hide-restaurant="'+r.docId+'" style="background:rgba(255,80,80,0.2);border-radius:8px;padding:2px 7px;font-size:9px;color:#ff9090;font-weight:700;cursor:pointer">숨기기</div>':""}
         </div>`:`<div style="height:14px"></div>`}
       </button>
@@ -986,7 +986,7 @@ function renderMain(){
   ${S.liveBoard?renderLiveBoard():""}
   ${S.settings?renderSettings():""}
   ${S.restaurantPopup?renderRestaurantPopup():""}
-  ${S.toast?`<div style="position:fixed;bottom:30px;left:50%;transform:translateX(-50%);background:rgba(20,20,50,0.97);backdrop-filter:blur(8px);border:1px solid rgba(108,99,255,0.4);border-radius:50px;padding:10px 20px;font-size:13px;font-weight:700;color:#fff;z-index:600;white-space:nowrap;animation:fadeUp 0.2s ease">${S.toast}</div>`:""}`;
+  ${S.toast?`<div style="position:fixed;top:70px;left:50%;transform:translateX(-50%);background:rgba(20,20,50,0.97);backdrop-filter:blur(8px);border:1px solid rgba(108,99,255,0.4);border-radius:50px;padding:10px 20px;font-size:13px;font-weight:700;color:#fff;z-index:600;white-space:nowrap;animation:slideDown 0.2s ease">${S.toast}</div>`:""}`;
 }
 
 // ── 메뉴 시트 (탭: 최근주문 / 인기순 / 가나다순) ────────────────
