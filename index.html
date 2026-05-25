@@ -24,7 +24,7 @@ input{font-family:inherit;}
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, setDoc, writeBatch, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-const VERSION = "v4.2";
+const VERSION = "v4.3";
 const firebaseConfig = {
   apiKey: "AIzaSyAQzhhO8NbhvUkNOjnjvVJgNNN4vx8KRXU",
   authDomain: "team-order-1cfb0.firebaseapp.com",
@@ -745,7 +745,7 @@ function renderMain(){
     const isRecent=recentRIds.includes(r.docId);
     const isNew=!S.seenRestaurantIds.includes(r.docId);
     return `<div style="position:relative;flex-shrink:0;min-width:64px">
-      <button data-rtab="${r.docId}" style="background:${active?"rgba(108,99,255,0.25)":isRecent?"rgba(255,157,60,0.1)":"rgba(255,255,255,0.04)"};border:2px solid ${active?"rgba(108,99,255,0.8)":isRecent?"rgba(255,157,60,0.35)":"rgba(255,255,255,0.08)"};border-radius:14px;padding:9px 10px 5px;display:flex;flex-direction:column;align-items:center;gap:2px;color:${active?"#c4c0ff":isRecent?"#ff9d60":"#606080"};transition:all 0.18s;width:100%">
+      <button data-rtab="${r.docId}" style="background:${active?"rgba(108,99,255,0.25)":"rgba(255,255,255,0.04)"};border:2px solid ${active?"rgba(108,99,255,0.8)":"rgba(255,255,255,0.08)"};border-radius:14px;padding:9px 10px 5px;display:flex;flex-direction:column;align-items:center;gap:2px;color:${active?"#c4c0ff":"#606080"};transition:all 0.18s;width:100%">
         <span style="font-size:20px">${r.emoji}</span>
         <span style="font-size:${S.fontSizes.restaurant}px;font-weight:700;white-space:nowrap">${r.name}</span>
         ${active?`<div style="display:flex;gap:4px;margin-top:1px;align-items:center">
