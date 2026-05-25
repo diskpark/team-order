@@ -24,7 +24,7 @@ input{font-family:inherit;}
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, setDoc, writeBatch, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-const VERSION = "v2.1";
+const VERSION = "v2.2";
 const firebaseConfig = {
   apiKey: "AIzaSyAQzhhO8NbhvUkNOjnjvVJgNNN4vx8KRXU",
   authDomain: "team-order-1cfb0.firebaseapp.com",
@@ -490,13 +490,16 @@ function renderMain(){
     const cnt=countByR(r.name);
     const isRecent=recentRIds.includes(r.docId);
     const isNew=!S.seenRestaurantIds.includes(r.docId);
-    return `<button data-rtab="${r.docId}" style="flex-shrink:0;background:${active?"rgba(108,99,255,0.25)":isRecent?"rgba(255,157,60,0.1)":"rgba(255,255,255,0.04)"};border:2px solid ${active?"rgba(108,99,255,0.8)":isRecent?"rgba(255,157,60,0.35)":"rgba(255,255,255,0.08)"};border-radius:14px;padding:9px 10px;display:flex;flex-direction:column;align-items:center;gap:2px;color:${active?"#c4c0ff":isRecent?"#ff9d60":"#606080"};position:relative;transition:all 0.18s;min-width:64px">
-      <span style="font-size:20px">${r.emoji}</span>
-      <span style="font-size:${S.fontSizes.restaurant}px;font-weight:700;white-space:nowrap">${r.name}</span>
-      ${cnt>0?`<span style="position:absolute;top:-5px;right:-5px;background:#ff6b6b;border-radius:20px;font-size:9px;padding:1px 5px;color:#fff;font-weight:800">${cnt}</span>`:""}
-      ${isNew?`<span style="position:absolute;top:-5px;left:-5px;background:#6c63ff;border-radius:20px;font-size:8px;padding:1px 5px;color:#fff;font-weight:800">NEW</span>`:""}
-      ${active?`<div style="position:absolute;bottom:-2px;left:50%;transform:translateX(-50%);width:6px;height:6px;border-radius:50%;background:#9d97ff"></div>`:""}
-    </button>`;
+    return `<div style="position:relative;flex-shrink:0;min-width:64px">
+      <button data-rtab="${r.docId}" style="background:${active?"rgba(108,99,255,0.25)":isRecent?"rgba(255,157,60,0.1)":"rgba(255,255,255,0.04)"};border:2px solid ${active?"rgba(108,99,255,0.8)":isRecent?"rgba(255,157,60,0.35)":"rgba(255,255,255,0.08)"};border-radius:14px;padding:9px 10px 5px;display:flex;flex-direction:column;align-items:center;gap:2px;color:${active?"#c4c0ff":isRecent?"#ff9d60":"#606080"};transition:all 0.18s;width:100%">
+        <span style="font-size:20px">${r.emoji}</span>
+        <span style="font-size:${S.fontSizes.restaurant}px;font-weight:700;white-space:nowrap">${r.name}</span>
+        ${active?`<div data-show-menu="${r.docId}" style="background:rgba(108,99,255,0.35);border-radius:8px;padding:2px 8px;font-size:9px;color:#c4c0ff;font-weight:700;margin-top:1px;cursor:pointer">메뉴보기</div>`:`<div style="height:14px"></div>`}
+      </button>
+      ${cnt>0?`<span style="position:absolute;top:-5px;right:-5px;background:#ff6b6b;border-radius:20px;font-size:9px;padding:1px 5px;color:#fff;font-weight:800;pointer-events:none">${cnt}</span>`:""}
+      ${isNew?`<span style="position:absolute;top:-5px;left:-5px;background:#6c63ff;border-radius:20px;font-size:8px;padding:1px 5px;color:#fff;font-weight:800;pointer-events:none">NEW</span>`:""}
+      ${active?`<div style="position:absolute;bottom:-2px;left:50%;transform:translateX(-50%);width:6px;height:6px;border-radius:50%;background:#9d97ff;pointer-events:none"></div>`:""}
+    </div>`;
   }).join("");
 
   const menuPreview=""; // 제거됨
@@ -1162,20 +1165,26 @@ function bindMain(){
   document.getElementById("live-btn")?.addEventListener("click",()=>{S.liveBoard=true;render();});
   document.getElementById("settings-btn")?.addEventListener("click",()=>{S.settings=true;render();});
   document.getElementById("reset-btn")?.addEventListener("click",resetMyOrders);
+  // 식당 탭 클릭 → 선택만 (팝업 안 열림)
   document.querySelectorAll("[data-rtab]").forEach(btn=>{
     btn.onclick=()=>{
       const r=S.restaurants.find(r=>r.docId===btn.dataset.rtab);
       if(!r) return;
       S.selectedRestaurantId=btn.dataset.rtab;
-      // seen 처리
+      S.restaurantMenuPopup=null;
       if(!S.seenRestaurantIds.includes(r.docId)){
         S.seenRestaurantIds.push(r.docId);
         localStorage.setItem("seenRestaurantIds",JSON.stringify(S.seenRestaurantIds));
       }
-      // 이미지 뷰어
-      // 메뉴 팝업 열기
-      S.restaurantMenuPopup=r.docId;
       render();
+    };
+  });
+  // 메뉴보기 div 클릭 → 팝업 오픈
+  document.querySelectorAll("[data-show-menu]").forEach(el=>{
+    el.onclick=(e)=>{
+      e.stopPropagation();
+      const r=S.restaurants.find(r=>r.docId===el.dataset.showMenu);
+      if(r){S.restaurantMenuPopup=r.docId;render();}
     };
   });
 
