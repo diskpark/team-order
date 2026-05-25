@@ -24,7 +24,7 @@ input{font-family:inherit;}
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, setDoc, writeBatch, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-const VERSION = "v2.8";
+const VERSION = "v2.9";
 const firebaseConfig = {
   apiKey: "AIzaSyAQzhhO8NbhvUkNOjnjvVJgNNN4vx8KRXU",
   authDomain: "team-order-1cfb0.firebaseapp.com",
@@ -119,7 +119,8 @@ let S = {
   myMemberId: localStorage.getItem("myMemberId")||null,
   chiefMode: false,
   joinRequests:[], // 합석 요청 목록 (실시간)
-  showJoinPanel:false, // 합석 요청 패널
+  showJoinPanel:false,
+  showSettlement:false, // 정산서 전체화면
   notices:[], // 공지사항 목록
   noticePopup:false, // 공지 팝업 열림
   noticeAdminMode:false, // 관리자 모드
@@ -311,6 +312,11 @@ async function submitOrder(member,menu){
     const newRef=doc(collection(db,"orders")); b.set(newRef,order);
     await b.commit();
     S.menuSheet=null; S.selectedMenu=null; S.multiSelect=false; S.selectedMenus=[];
+    // 합석 멤버면 주문 후 자동으로 합석 요청 삭제
+    if(member.isGuest){
+      const jr=S.joinRequests.find(r=>r.fromTeamId===member.teamId&&r.toTeamId===S.myTeam.docId&&r.status==="accepted");
+      if(jr) deleteDoc(doc(db,"joinRequests",jr.docId)).catch(()=>{});
+    }
     showToast(`✅ ${member.name} · ${menu.name}`);
   }catch(e){showToast("❌ 저장 실패");}
 }
@@ -319,13 +325,13 @@ async function submitMultiOrder(member){
   const r=getSelR(); if(!r||!member||S.selectedMenus.length===0) return;
   const guestTeam=member.isGuest?member.teamName:null;
   const at=new Date().toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit"});
-  const menuSummary=S.selectedMenus.map(m=>m.name).join(", ");
-  const total=S.selectedMenus.reduce((s,m)=>s+m.price,0);
+  const menus=[...S.selectedMenus];
+  const total=menus.reduce((s,m)=>s+m.price,0);
   try{
     const exOrders=S.allOrders.filter(o=>o.team===S.myTeam.name&&o.member===member.name);
     const b=writeBatch(db);
     exOrders.forEach(o=>b.delete(doc(db,"orders",o.docId)));
-    S.selectedMenus.forEach((menu,idx)=>{
+    menus.forEach((menu,idx)=>{
       const ref=doc(collection(db,"orders"));
       b.set(ref,{team:S.myTeam.name,member:member.name,restaurant:r.name,restaurantEmoji:r.emoji,
         menu:menu.name,price:menu.price,at,date:todayKey(),timestamp:Date.now(),
@@ -333,7 +339,11 @@ async function submitMultiOrder(member){
     });
     await b.commit();
     S.menuSheet=null; S.selectedMenu=null; S.multiSelect=false; S.selectedMenus=[];
-    showToast(`✅ ${member.name} · ${S.selectedMenus.length}개 / ${fmt(total)}`);
+    if(member.isGuest){
+      const jr=S.joinRequests.find(r=>r.fromTeamId===member.teamId&&r.toTeamId===S.myTeam.docId&&r.status==="accepted");
+      if(jr) deleteDoc(doc(db,"joinRequests",jr.docId)).catch(()=>{});
+    }
+    showToast(`✅ ${member.name} · ${menus.length}개 / ${fmt(total)}`);
   }catch(e){showToast("❌ 저장 실패");}
 }
 
@@ -427,14 +437,20 @@ async function sendJoinRequest(targetTeamDocId){
   // 이미 pending 요청 있는지 확인
   const existing=S.joinRequests.find(r=>r.fromTeamId===S.myTeam.docId&&r.toTeamId===targetTeamDocId&&r.status==="pending");
   if(existing){showToast("⚠️ 이미 요청 중입니다");return;}
+  // 총무 본인만 넘김 (myMemberId 기준)
+  const myMember=(S.myTeam.members||[]).find(m=>m.id===S.myMemberId);
+  if(!myMember){showToast("⚠️ 내 이름을 먼저 등록해주세요 (설정에서 확인)");return;}
+  const fromMembers=[{id:myMember.id,name:myMember.name}];
   const id=`jr_${uid()}`;
   await setDoc(doc(db,"joinRequests",id),{
     id, fromTeamId:S.myTeam.docId, fromTeamName:S.myTeam.name,
     toTeamId:targetTeamDocId, toTeamName:target.name,
+    fromMembers, // 합류할 특정 멤버만
     status:"pending", timestamp:Date.now(),
     date:todayKey()
   });
-  showToast(`✅ ${target.name}에 합석 요청 전송!`);
+  const whoText=`${myMember.name}님 (총무)`;
+  showToast(`✅ ${target.name}에 합석 요청 전송! (${whoText})`);
   S.showJoinPanel=false; render();
 }
 
@@ -459,14 +475,18 @@ async function cancelJoinRequest(docId){
 function getJoinedMembers(){
   if(!S.myTeam) return [];
   const myMembers=(S.myTeam.members||[]).map(m=>({...m,teamName:S.myTeam.name,teamId:S.myTeam.docId}));
-  // 내 조에 합석 수락된 팀 멤버 추가
+  // 내 조에 합석 수락된 팀 멤버 추가 (fromMembers 있으면 그 사람만)
   const accepted=S.joinRequests.filter(r=>r.toTeamId===S.myTeam.docId&&r.status==="accepted"&&r.date===todayKey());
   const guestMembers=[];
   accepted.forEach(r=>{
     const guestTeam=S.teams.find(t=>t.docId===r.fromTeamId);
-    if(guestTeam){
-      (guestTeam.members||[]).forEach(m=>guestMembers.push({...m,teamName:r.fromTeamName,teamId:r.fromTeamId,isGuest:true}));
-    }
+    if(!guestTeam) return;
+    const allTeamMembers=guestTeam.members||[];
+    // fromMembers 지정됐으면 그 사람만, 아니면 전체
+    const targetMembers=(r.fromMembers&&r.fromMembers.length>0)
+      ?allTeamMembers.filter(m=>r.fromMembers.some(fm=>fm.id===m.id))
+      :allTeamMembers;
+    targetMembers.forEach(m=>guestMembers.push({...m,teamName:r.fromTeamName,teamId:r.fromTeamId,isGuest:true}));
   });
   return [...myMembers,...guestMembers];
 }
@@ -716,6 +736,7 @@ function renderMain(){
             <div><div style="font-size:14px;font-weight:800;color:#fff">${g.name}</div><div style="font-size:11px;color:#5050a0">${g.items.length}명 주문</div></div>
           </div>
           <div style="display:flex;gap:6px">
+            <button data-settlement="${g.name}" style="background:rgba(255,157,60,0.15);border:1px solid rgba(255,157,60,0.3);border-radius:20px;padding:6px 12px;font-size:12px;color:#ff9d60;font-weight:700">🧾 정산</button>
             <button data-sms-main="${g.name}" style="background:rgba(60,200,120,0.15);border:1px solid rgba(60,200,120,0.3);border-radius:20px;padding:6px 12px;font-size:12px;color:#60c880;font-weight:700">📱 문자</button>
             ${hasPhone?`<button data-call-main="${g.name}" style="background:rgba(108,99,255,0.15);border:1px solid rgba(108,99,255,0.3);border-radius:20px;padding:6px 12px;font-size:12px;color:#9d97ff;font-weight:700">📞 전화</button>`:""}
           </div>
@@ -764,9 +785,9 @@ function renderMain(){
         </button>
         <span style="font-size:10px;color:#404060;font-weight:600">${VERSION}</span>
         <div style="background:rgba(108,99,255,0.15);border:1px solid rgba(108,99,255,0.3);border-radius:20px;padding:3px 9px;font-size:11px;color:#9d97ff;font-weight:700">${myOrders.length}/${myMembers.length}${members.length>myMembers.length?`+${members.length-myMembers.length}`:""}</div>
-        <button id="join-btn" style="background:${(outgoingReq||incomingReqs.length>0)?"rgba(108,99,255,0.25)":"rgba(255,255,255,0.07)"};border:1px solid ${(outgoingReq||incomingReqs.length>0)?"rgba(108,99,255,0.5)":"rgba(255,255,255,0.12)"};border-radius:10px;padding:0 10px;height:33px;font-size:11px;font-weight:800;color:${(outgoingReq||incomingReqs.length>0)?"#c4c0ff":"#808090"};white-space:nowrap;position:relative">
-          🤝${(S.chiefMode&&incomingReqs.length>0)?`<span style="position:absolute;top:-4px;right:-4px;background:#ff6b6b;border-radius:50%;width:14px;height:14px;font-size:9px;color:#fff;display:flex;align-items:center;justify-content:center">${incomingReqs.length}</span>`:""}
-        </button>
+        ${S.chiefMode?`<button id="join-btn" style="background:${(outgoingReq||incomingReqs.length>0)?"rgba(108,99,255,0.25)":"rgba(255,255,255,0.07)"};border:1px solid ${(outgoingReq||incomingReqs.length>0)?"rgba(108,99,255,0.5)":"rgba(255,255,255,0.12)"};border-radius:10px;padding:0 10px;height:33px;font-size:11px;font-weight:800;color:${(outgoingReq||incomingReqs.length>0)?"#c4c0ff":"#808090"};white-space:nowrap;position:relative">
+          🤝${incomingReqs.length>0?`<span style="position:absolute;top:-4px;right:-4px;background:#ff6b6b;border-radius:50%;width:14px;height:14px;font-size:9px;color:#fff;display:flex;align-items:center;justify-content:center">${incomingReqs.length}</span>`:""}
+        </button>`:``}
         <button id="chief-btn" style="background:${S.chiefMode?"linear-gradient(135deg,#ff9d60,#ffb860)":"rgba(255,255,255,0.07)"};border:1px solid ${S.chiefMode?"rgba(255,157,60,0.6)":"rgba(255,255,255,0.12)"};border-radius:10px;padding:0 10px;height:33px;font-size:11px;font-weight:800;color:${S.chiefMode?"#fff":"#808090"};white-space:nowrap">
           ${S.chiefMode?"👑 총무":"총무"}
         </button>
@@ -818,6 +839,7 @@ function renderMain(){
       ${summaryHTML}
     </div>
   </div>
+  ${S.showSettlement?renderSettlement(S.showSettlement):""}
   ${S.showJoinPanel?renderJoinPanel():""}
   ${renderJoinIncomingAlert()}
   ${S.phoneBookOpen?renderPhoneBookPanel():""}
@@ -1056,6 +1078,89 @@ function renderPhoneBookPanel(){
   </div>`;
 }
 
+// ── 정산서 전체화면 ──────────────────────────────────────────────
+function renderSettlement(restaurantName){
+  const rOrders=S.allOrders.filter(o=>
+    (o.team===S.myTeam.name||o.guestTeam===S.myTeam.name||
+     (o.team===S.myTeam.name))&&o.restaurant===restaurantName
+  );
+  const r=S.restaurants.find(r=>r.name===restaurantName);
+
+  // 팀별 그룹
+  const teamGroups={};
+  rOrders.forEach(o=>{
+    const tname=o.guestTeam||o.team;
+    if(!teamGroups[tname])teamGroups[tname]={name:tname,orders:[],total:0,isGuest:o.guestTeam===tname};
+    teamGroups[tname].orders.push(o);
+    teamGroups[tname].total+=o.price;
+  });
+
+  // 메뉴별 집계 (전체)
+  const menuCount={};
+  rOrders.forEach(o=>{if(!menuCount[o.menu])menuCount[o.menu]={name:o.menu,price:o.price,count:0};menuCount[o.menu].count++;});
+  const grandTotal=rOrders.reduce((s,o)=>s+o.price,0);
+
+  const teamRows=Object.values(teamGroups).map(tg=>`
+    <div style="margin-bottom:16px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid rgba(255,255,255,0.08)">
+        <div style="font-size:14px;font-weight:800;color:${tg.isGuest?"#ff9d60":"#9d97ff"}">${tg.isGuest?"🤝 ":"👥 "}${tg.name}</div>
+        <div style="font-size:15px;font-weight:900;color:#fff">${fmt(tg.total)}</div>
+      </div>
+      ${tg.orders.map(o=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid rgba(255,255,255,0.04)">
+        <div>
+          <span style="font-size:14px;font-weight:700;color:#e0e0f0">${o.member}</span>
+          <span style="font-size:12px;color:#6060a0;margin-left:8px">${o.menu}</span>
+        </div>
+        <span style="font-size:13px;font-weight:700;color:#9d97ff">${fmt(o.price)}</span>
+      </div>`).join("")}
+    </div>`).join("");
+
+  const menuRows=Object.values(menuCount).map(m=>`
+    <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.05)">
+      <span style="font-size:13px;color:#c0c0d8">${m.name} × ${m.count}</span>
+      <span style="font-size:13px;font-weight:700;color:#9d97ff">${fmt(m.count*m.price)}</span>
+    </div>`).join("");
+
+  return `<div style="position:fixed;inset:0;z-index:350;background:#0d0d1a;display:flex;flex-direction:column;animation:fadeUp 0.25s ease">
+    <!-- 헤더 -->
+    <div style="padding:16px 16px 12px;background:rgba(255,255,255,0.03);border-bottom:1px solid rgba(255,255,255,0.08);flex-shrink:0;display:flex;align-items:center;justify-content:space-between">
+      <div>
+        <div style="font-size:10px;color:#5050a0;letter-spacing:2px;font-weight:700">SETTLEMENT</div>
+        <div style="font-size:18px;font-weight:900;color:#fff">${r?.emoji||"🍽"} ${restaurantName} 정산서</div>
+      </div>
+      <button id="settle-close" style="background:rgba(255,255,255,0.07);border:none;border-radius:50%;width:34px;height:34px;color:#9090c0;font-size:16px;display:flex;align-items:center;justify-content:center">✕</button>
+    </div>
+    <div style="flex:1;overflow-y:auto;padding:16px 15px 30px">
+      <!-- 팀별 정산 -->
+      <div style="margin-bottom:20px">
+        <div style="font-size:11px;color:#5050a0;font-weight:700;letter-spacing:1px;margin-bottom:10px">👥 팀별 정산</div>
+        ${teamRows}
+      </div>
+      <!-- 메뉴별 집계 -->
+      <div style="background:rgba(108,99,255,0.07);border:1px solid rgba(108,99,255,0.2);border-radius:14px;padding:14px;margin-bottom:16px">
+        <div style="font-size:11px;color:#6c63ff;font-weight:700;letter-spacing:1px;margin-bottom:10px">🍽 메뉴별 주문 현황</div>
+        ${menuRows}
+      </div>
+      <!-- 합계 -->
+      <div style="background:linear-gradient(135deg,rgba(108,99,255,0.15),rgba(157,151,255,0.1));border:1px solid rgba(108,99,255,0.3);border-radius:14px;padding:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <span style="font-size:13px;color:#9090a0">총 인원</span>
+          <span style="font-size:15px;font-weight:800;color:#fff">${rOrders.length}명</span>
+        </div>
+        ${Object.values(teamGroups).length>1?Object.values(teamGroups).map(tg=>`
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <span style="font-size:12px;color:${tg.isGuest?"#ff9d60":"#9d97ff"}">${tg.name} (${tg.orders.length}명)</span>
+          <span style="font-size:14px;font-weight:700;color:${tg.isGuest?"#ff9d60":"#9d97ff"}">${fmt(tg.total)}</span>
+        </div>`).join(""):""}
+        <div style="display:flex;justify-content:space-between;align-items:center;padding-top:10px;border-top:1px solid rgba(255,255,255,0.1);margin-top:6px">
+          <span style="font-size:15px;font-weight:800;color:#fff">합계</span>
+          <span style="font-size:22px;font-weight:900;color:#9d97ff">${fmt(grandTotal)}</span>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
 // ── 공지사항 팝업 ────────────────────────────────────────────────
 function renderNoticePopup(){
   const isAdmin=S.noticeAdminMode;
@@ -1215,6 +1320,7 @@ function renderJoinPanel(){
         ${outgoing?`<div style="background:${outgoing.status==="accepted"?"rgba(60,200,120,0.1)":"rgba(255,157,60,0.1)"};border:1.5px solid ${outgoing.status==="accepted"?"rgba(60,200,120,0.4)":"rgba(255,157,60,0.4)"};border-radius:14px;padding:13px 15px;margin-bottom:14px">
           <div style="font-size:13px;font-weight:800;color:${outgoing.status==="accepted"?"#60c880":"#ff9d60"}">${outgoing.status==="accepted"?"✅ 합석 수락됨":"⏳ 합석 요청 중"}</div>
           <div style="font-size:12px;color:#9090a0;margin-top:4px">${outgoing.toTeamName}에 요청 전송됨</div>
+          <div style="font-size:11px;color:#6060a0;margin-top:2px">참여자: ${outgoing.fromMembers&&outgoing.fromMembers.length>0?outgoing.fromMembers.map(m=>m.name).join(", "):"전체"}</div>
           ${outgoing.status==="accepted"?`<div style="font-size:11px;color:#60c880;margin-top:4px">이제 ${outgoing.toTeamName} 주문 화면에서 주문하세요!</div>`:""}
           <button data-cancel-join="${outgoing.docId}" style="margin-top:10px;background:rgba(255,80,80,0.12);border:1px solid rgba(255,80,80,0.28);border-radius:8px;padding:6px 14px;color:#ff8080;font-size:12px;font-weight:700">요청 취소</button>
         </div>`:""}
@@ -1656,6 +1762,10 @@ function bindMain(){
     };
   });
   document.querySelectorAll("[data-delete]").forEach(btn=>{btn.onclick=async()=>{await deleteDoc(doc(db,"orders",btn.dataset.delete));};});
+  document.querySelectorAll("[data-settlement]").forEach(btn=>{
+    btn.onclick=()=>{S.showSettlement=btn.dataset.settlement;render();};
+  });
+  document.getElementById("settle-close")?.addEventListener("click",()=>{S.showSettlement=false;render();});
   document.querySelectorAll("[data-sms-main]").forEach(btn=>{btn.onclick=()=>sendSMS(btn.dataset.smsMain);});
   document.querySelectorAll("[data-call-main]").forEach(btn=>{btn.onclick=()=>callRestaurant(btn.dataset.callMain);});
 
