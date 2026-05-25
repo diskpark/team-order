@@ -155,6 +155,11 @@ function initFirebase(){
     }
     S.teams = snap.docs.map(d=>({...d.data(),docId:d.id}));
     S.teams.sort((a,b)=>{const na=parseInt(a.name),nb=parseInt(b.name);return isNaN(na)||isNaN(nb)?a.name.localeCompare(b.name,'ko'):na-nb;});
+    // 지게차 팀 없으면 자동 추가
+    if(!S.teams.find(t=>t.id==="tfk")){
+      const fkTeam=DEFAULT_TEAMS.find(t=>t.id==="tfk");
+      if(fkTeam) setDoc(doc(db,"teams","tfk"),fkTeam).catch(()=>{});
+    }
     if(S.myTeam) S.myTeam = S.teams.find(t=>t.docId===S.myTeam.docId)||S.myTeam;
     S.loadedTeams = true;
     checkReady();
