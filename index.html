@@ -24,7 +24,7 @@ input{font-family:inherit;}
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, setDoc, writeBatch, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-const VERSION = "v2.7";
+const VERSION = "v2.8";
 const firebaseConfig = {
   apiKey: "AIzaSyAQzhhO8NbhvUkNOjnjvVJgNNN4vx8KRXU",
   authDomain: "team-order-1cfb0.firebaseapp.com",
@@ -96,6 +96,8 @@ let S = {
   recentDetailIdx:null,
   quickAddMode:false, quickAddName:"",
   menuSheetTab:"recent", // recent | popular | alpha
+  multiSelect:false,   // 복수선택 모드
+  selectedMenus:[],    // 복수선택된 메뉴 목록 [{id,name,price}]
   seenRestaurantIds:JSON.parse(localStorage.getItem("seenRestaurantIds")||"[]"), // 이미 본 식당 ID
   restaurantMenuPopup:null, // 식당 메뉴 팝업 {restaurant}
   bulkOrder:null,    // 단체주문 모드 {restaurantDocId}
@@ -300,15 +302,38 @@ function getSelR(){ return S.restaurants.find(r=>r.docId===S.selectedRestaurantI
 
 async function submitOrder(member,menu){
   const r=getSelR(); if(!r||!member||!menu) return;
-  const memberObj=(S.myTeam.members||[]).find(m=>m.name===member.name);
   const guestTeam=member.isGuest?member.teamName:null;
   const order={team:S.myTeam.name,member:member.name,restaurant:r.name,restaurantEmoji:r.emoji,menu:menu.name,price:menu.price,at:new Date().toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit"}),date:todayKey(),timestamp:Date.now(),...(guestTeam?{guestTeam}:{})};
   try{
-    const ex=S.allOrders.find(o=>o.team===S.myTeam.name&&o.member===member.name);
-    if(ex?.docId) await deleteDoc(doc(db,"orders",ex.docId));
-    await addDoc(collection(db,"orders"),order);
-    S.menuSheet=null; S.selectedMenu=null;
+    const exOrders=S.allOrders.filter(o=>o.team===S.myTeam.name&&o.member===member.name);
+    const b=writeBatch(db);
+    exOrders.forEach(o=>b.delete(doc(db,"orders",o.docId)));
+    const newRef=doc(collection(db,"orders")); b.set(newRef,order);
+    await b.commit();
+    S.menuSheet=null; S.selectedMenu=null; S.multiSelect=false; S.selectedMenus=[];
     showToast(`✅ ${member.name} · ${menu.name}`);
+  }catch(e){showToast("❌ 저장 실패");}
+}
+
+async function submitMultiOrder(member){
+  const r=getSelR(); if(!r||!member||S.selectedMenus.length===0) return;
+  const guestTeam=member.isGuest?member.teamName:null;
+  const at=new Date().toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit"});
+  const menuSummary=S.selectedMenus.map(m=>m.name).join(", ");
+  const total=S.selectedMenus.reduce((s,m)=>s+m.price,0);
+  try{
+    const exOrders=S.allOrders.filter(o=>o.team===S.myTeam.name&&o.member===member.name);
+    const b=writeBatch(db);
+    exOrders.forEach(o=>b.delete(doc(db,"orders",o.docId)));
+    S.selectedMenus.forEach((menu,idx)=>{
+      const ref=doc(collection(db,"orders"));
+      b.set(ref,{team:S.myTeam.name,member:member.name,restaurant:r.name,restaurantEmoji:r.emoji,
+        menu:menu.name,price:menu.price,at,date:todayKey(),timestamp:Date.now(),
+        multiIdx:idx,...(guestTeam?{guestTeam}:{})});
+    });
+    await b.commit();
+    S.menuSheet=null; S.selectedMenu=null; S.multiSelect=false; S.selectedMenus=[];
+    showToast(`✅ ${member.name} · ${S.selectedMenus.length}개 / ${fmt(total)}`);
   }catch(e){showToast("❌ 저장 실패");}
 }
 
@@ -740,7 +765,7 @@ function renderMain(){
         <span style="font-size:10px;color:#404060;font-weight:600">${VERSION}</span>
         <div style="background:rgba(108,99,255,0.15);border:1px solid rgba(108,99,255,0.3);border-radius:20px;padding:3px 9px;font-size:11px;color:#9d97ff;font-weight:700">${myOrders.length}/${myMembers.length}${members.length>myMembers.length?`+${members.length-myMembers.length}`:""}</div>
         <button id="join-btn" style="background:${(outgoingReq||incomingReqs.length>0)?"rgba(108,99,255,0.25)":"rgba(255,255,255,0.07)"};border:1px solid ${(outgoingReq||incomingReqs.length>0)?"rgba(108,99,255,0.5)":"rgba(255,255,255,0.12)"};border-radius:10px;padding:0 10px;height:33px;font-size:11px;font-weight:800;color:${(outgoingReq||incomingReqs.length>0)?"#c4c0ff":"#808090"};white-space:nowrap;position:relative">
-          🤝${incomingReqs.length>0?`<span style="position:absolute;top:-4px;right:-4px;background:#ff6b6b;border-radius:50%;width:14px;height:14px;font-size:9px;color:#fff;display:flex;align-items:center;justify-content:center">${incomingReqs.length}</span>`:""}
+          🤝${(S.chiefMode&&incomingReqs.length>0)?`<span style="position:absolute;top:-4px;right:-4px;background:#ff6b6b;border-radius:50%;width:14px;height:14px;font-size:9px;color:#fff;display:flex;align-items:center;justify-content:center">${incomingReqs.length}</span>`:""}
         </button>
         <button id="chief-btn" style="background:${S.chiefMode?"linear-gradient(135deg,#ff9d60,#ffb860)":"rgba(255,255,255,0.07)"};border:1px solid ${S.chiefMode?"rgba(255,157,60,0.6)":"rgba(255,255,255,0.12)"};border-radius:10px;padding:0 10px;height:33px;font-size:11px;font-weight:800;color:${S.chiefMode?"#fff":"#808090"};white-space:nowrap">
           ${S.chiefMode?"👑 총무":"총무"}
@@ -811,43 +836,48 @@ function renderMain(){
 function renderMenuSheet(){
   const r=getSelR(); if(!r) return "";
   const member=S.menuSheet.member;
-  const existing=getMyOrder(member.name);
+  const existing=S.allOrders.filter(o=>o.team===S.myTeam.name&&o.member===member.name);
+  const existingNames=existing.map(o=>o.menu).join(", ");
 
-  // 전체 조 주문량
   const menuCounts={};
   S.allOrders.filter(o=>o.restaurant===r.name).forEach(o=>{menuCounts[o.menu]=(menuCounts[o.menu]||0)+1;});
 
-  // 이 팀원의 최근 주문 5개 (recentOrders에서 같은 식당)
   const myRecentOrders=S.recentOrders
     .filter(ro=>ro.restaurantName===r.name)
     .flatMap(ro=>ro.orders.filter(o=>o.member===member.name))
     .slice(0,5);
 
-  // 탭별 메뉴
   const popularMenus=[...(r.menus||[])].sort((a,b)=>(menuCounts[b.name]||0)-(menuCounts[a.name]||0));
   const alphaMenus=[...(r.menus||[])].sort((a,b)=>a.name.localeCompare(b.name,'ko'));
 
+  // 복수선택 총액
+  const multiTotal=S.selectedMenus.reduce((s,m)=>s+m.price,0);
+
   const menuCard=(menu)=>{
-    const active=S.selectedMenu?.id===menu.id;
+    const singleActive=!S.multiSelect&&S.selectedMenu?.id===menu.id;
+    // 복수선택에서 이 메뉴 몇 개 선택됐는지
+    const multiCount=S.multiSelect?S.selectedMenus.filter(m=>m.id===menu.id).length:0;
+    const isMultiSelected=multiCount>0;
     const cnt=menuCounts[menu.name]||0;
+    const active=singleActive||isMultiSelected;
     return `<button data-menu="${menu.id}" style="background:${active?"rgba(108,99,255,0.28)":"rgba(255,255,255,0.05)"};border:2px solid ${active?"rgba(108,99,255,0.8)":"rgba(255,255,255,0.09)"};border-radius:14px;padding:11px 7px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;width:100%;position:relative;min-height:70px">
-      ${active?`<div style="position:absolute;top:5px;right:5px;width:13px;height:13px;border-radius:50%;background:#6c63ff;font-size:8px;color:#fff;display:flex;align-items:center;justify-content:center">✓</div>`:""}
+      ${S.multiSelect&&isMultiSelected?`<div style="position:absolute;top:5px;right:5px;background:#6c63ff;border-radius:50%;width:18px;height:18px;font-size:10px;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800">${multiCount}</div>`:""}
+      ${!S.multiSelect&&active?`<div style="position:absolute;top:5px;right:5px;width:13px;height:13px;border-radius:50%;background:#6c63ff;display:flex;align-items:center;justify-content:center;font-size:8px;color:#fff">✓</div>`:""}
       <div style="font-size:${S.fontSizes.menu}px;font-weight:700;color:${active?"#c4c0ff":"#d0d0e8"};text-align:center;line-height:1.3;word-break:keep-all;padding:0 2px">${menu.name}</div>
       <div style="display:flex;align-items:center;gap:3px">
-        <span style="font-size:14px;font-weight:900;color:${active?"#9d97ff":"#b0b0d0"}">${fmt(menu.price)}</span>
+        <span style="font-size:13px;font-weight:900;color:${active?"#9d97ff":"#b0b0d0"}">${fmt(menu.price)}</span>
         ${cnt>0?`<span style="font-size:8px;background:#ff6b6b;border-radius:20px;padding:1px 4px;color:#fff;font-weight:800">${cnt}</span>`:""}
       </div>
     </button>`;
   };
 
-  // 최근주문 탭 - 5개 리스트
   const recentTabContent=myRecentOrders.length>0
     ?`<div style="display:flex;flex-direction:column;gap:7px;padding:12px 13px">
         ${myRecentOrders.map(o=>{
           const mObj=r.menus?.find(m=>m.name===o.menu);
           return `<button data-menu-recent="${mObj?.id||''}" data-menu-name="${o.menu}" style="background:rgba(255,157,60,0.08);border:1.5px solid rgba(255,157,60,0.25);border-radius:13px;padding:13px 16px;display:flex;justify-content:space-between;align-items:center;width:100%">
             <span style="font-size:15px;font-weight:700;color:#ff9d60">${o.menu}</span>
-            <span style="font-size:16px;font-weight:900;color:#ffb860">${fmt(o.price||mObj?.price||0)}</span>
+            <span style="font-size:14px;font-weight:900;color:#ffb860">${fmt(o.price||mObj?.price||0)}</span>
           </button>`;
         }).join("")}
       </div>`
@@ -855,25 +885,43 @@ function renderMenuSheet(){
 
   return `<div style="position:fixed;inset:0;z-index:100;display:flex;flex-direction:column;justify-content:flex-start">
     <div id="ms-bg" style="position:absolute;inset:0;background:rgba(0,0,0,0.72);backdrop-filter:blur(5px)"></div>
-    <div style="position:relative;z-index:1;background:#13132a;border-bottom:1px solid rgba(255,255,255,0.1);border-radius:0 0 22px 22px;max-height:82vh;display:flex;flex-direction:column;overflow:hidden;animation:slideDown 0.25s ease">
+    <div style="position:relative;z-index:1;background:#13132a;border-bottom:1px solid rgba(255,255,255,0.1);border-radius:0 0 22px 22px;max-height:85vh;display:flex;flex-direction:column;overflow:hidden;animation:slideDown 0.25s ease">
       <!-- 헤더 -->
       <div style="padding:12px 15px 8px;flex-shrink:0;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,0.07)">
         <div>
           <div style="font-size:16px;font-weight:900;color:#fff">${r.emoji} ${r.name}</div>
-          <div style="font-size:11px;color:#6060a0;margin-top:1px">👤 ${member.name}${existing?` <span style="color:#ff9d60">· ${existing.menu}</span>`:""} · 탭하면 바로 주문</div>
+          <div style="font-size:11px;color:#6060a0;margin-top:1px">👤 ${member.name}${existingNames?` <span style="color:#ff9d60">· ${existingNames}</span>`:""}</div>
         </div>
-        <button id="ms-close" style="background:rgba(255,255,255,0.07);border:none;border-radius:50%;width:30px;height:30px;color:#9090c0;font-size:13px;display:flex;align-items:center;justify-content:center">✕</button>
+        <div style="display:flex;align-items:center;gap:7px">
+          <!-- 복수선택 토글 -->
+          <button id="ms-multi-toggle" style="background:${S.multiSelect?"linear-gradient(135deg,#6c63ff,#9d97ff)":"rgba(255,255,255,0.07)"};border:1px solid ${S.multiSelect?"transparent":"rgba(255,255,255,0.15)"};border-radius:20px;padding:5px 11px;font-size:11px;font-weight:700;color:${S.multiSelect?"#fff":"#9090a0"}">
+            ${S.multiSelect?"✓ 복수선택":"복수선택"}
+          </button>
+          <button id="ms-close" style="background:rgba(255,255,255,0.07);border:none;border-radius:50%;width:30px;height:30px;color:#9090c0;font-size:13px;display:flex;align-items:center;justify-content:center">✕</button>
+        </div>
       </div>
-      <!-- 3탭 -->
+      <!-- 탭 -->
       <div style="display:flex;border-bottom:1px solid rgba(255,255,255,0.07);flex-shrink:0">
-        <button data-menu-tab="recent" style="flex:1;padding:9px 4px;background:none;border:none;border-bottom:2px solid ${S.menuSheetTab==="recent"?"#ff9d60":"transparent"};font-size:11px;font-weight:700;color:${S.menuSheetTab==="recent"?"#ff9d60":"#505070"}">🕐 최근주문</button>
+        <button data-menu-tab="recent" style="flex:1;padding:9px 4px;background:none;border:none;border-bottom:2px solid ${S.menuSheetTab==="recent"?"#ff9d60":"transparent"};font-size:11px;font-weight:700;color:${S.menuSheetTab==="recent"?"#ff9d60":"#505070"}">🕐 최근</button>
         <button data-menu-tab="popular" style="flex:1;padding:9px 4px;background:none;border:none;border-bottom:2px solid ${S.menuSheetTab==="popular"?"#6c63ff":"transparent"};font-size:11px;font-weight:700;color:${S.menuSheetTab==="popular"?"#9d97ff":"#505070"}">🔥 인기순</button>
         <button data-menu-tab="alpha" style="flex:1;padding:9px 4px;background:none;border:none;border-bottom:2px solid ${S.menuSheetTab==="alpha"?"#6c63ff":"transparent"};font-size:11px;font-weight:700;color:${S.menuSheetTab==="alpha"?"#9d97ff":"#505070"}">가나다순</button>
       </div>
+      <!-- 복수선택 선택 목록 -->
+      ${S.multiSelect&&S.selectedMenus.length>0?`<div style="padding:8px 13px;background:rgba(108,99,255,0.08);border-bottom:1px solid rgba(108,99,255,0.2);flex-shrink:0;overflow-x:auto;display:flex;gap:6px;align-items:center">
+        <span style="font-size:10px;color:#9d97ff;font-weight:700;white-space:nowrap">선택:</span>
+        ${S.selectedMenus.map((m,i)=>`<span style="flex-shrink:0;background:rgba(108,99,255,0.2);border:1px solid rgba(108,99,255,0.4);border-radius:20px;padding:3px 9px;font-size:11px;color:#c4c0ff;white-space:nowrap">${m.name}</span>`).join("")}
+        <span style="flex-shrink:0;font-size:12px;font-weight:800;color:#9d97ff;white-space:nowrap">${fmt(multiTotal)}</span>
+      </div>`:""}
       <!-- 탭 컨텐츠 -->
       <div style="overflow-y:auto;flex:1">
         ${S.menuSheetTab==="recent"?recentTabContent:`<div style="padding:10px 13px 16px"><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">${(S.menuSheetTab==="popular"?popularMenus:alphaMenus).map(m=>menuCard(m)).join("")}</div></div>`}
       </div>
+      <!-- 복수선택 주문 버튼 -->
+      ${S.multiSelect?`<div style="padding:10px 13px 18px;flex-shrink:0;border-top:1px solid rgba(255,255,255,0.07)">
+        <button id="ms-multi-submit" style="width:100%;height:46px;background:${S.selectedMenus.length>0?"linear-gradient(135deg,#6c63ff,#9d97ff)":"rgba(255,255,255,0.06)"};border:none;border-radius:13px;color:${S.selectedMenus.length>0?"#fff":"#333355"};font-size:15px;font-weight:800">
+          ${S.selectedMenus.length>0?`✓ ${S.selectedMenus.length}개 주문 · ${fmt(multiTotal)}`:"메뉴를 선택해주세요"}
+        </button>
+      </div>`:""}
     </div>
   </div>`;
 }
@@ -1196,6 +1244,8 @@ function renderJoinPanel(){
 
 // ── 합석 수신 알림 ──────────────────────────────────────────────
 function renderJoinIncomingAlert(){
+  // 총무 모드일 때만 알림 표시
+  if(!S.chiefMode) return "";
   const incoming=S.joinRequests.filter(r=>r.toTeamId===S.myTeam?.docId&&r.status==="pending"&&r.date===todayKey());
   if(incoming.length===0) return "";
   return `<div style="position:fixed;bottom:30px;left:50%;transform:translateX(-50%);z-index:500;width:calc(100% - 32px);max-width:400px">
@@ -1684,8 +1734,21 @@ function bindMain(){
   });
 }
 function bindMenuSheet(){
-  document.getElementById("ms-bg")?.addEventListener("click",()=>{S.menuSheet=null;S.selectedMenu=null;render();});
-  document.getElementById("ms-close")?.addEventListener("click",()=>{S.menuSheet=null;S.selectedMenu=null;render();});
+  document.getElementById("ms-bg")?.addEventListener("click",()=>{S.menuSheet=null;S.selectedMenu=null;S.multiSelect=false;S.selectedMenus=[];render();});
+  document.getElementById("ms-close")?.addEventListener("click",()=>{S.menuSheet=null;S.selectedMenu=null;S.multiSelect=false;S.selectedMenus=[];render();});
+
+  // 복수선택 토글
+  document.getElementById("ms-multi-toggle")?.addEventListener("click",()=>{
+    S.multiSelect=!S.multiSelect;
+    S.selectedMenus=[];
+    S.selectedMenu=null;
+    render();
+  });
+
+  // 복수선택 주문 버튼
+  document.getElementById("ms-multi-submit")?.addEventListener("click",async()=>{
+    if(S.selectedMenus.length>0) await submitMultiOrder(S.menuSheet?.member);
+  });
 
   // 탭 전환
   document.querySelectorAll("[data-menu-tab]").forEach(btn=>{
@@ -1700,7 +1763,12 @@ function bindMenuSheet(){
       const menuName=btn.dataset.menuName;
       const menu=menuId?r.menus?.find(m=>m.id===menuId):r.menus?.find(m=>m.name===menuName);
       if(!menu) return;
-      await submitOrder(member,menu);
+      if(S.multiSelect){
+        S.selectedMenus=[...S.selectedMenus,{id:menu.id,name:menu.name,price:menu.price}];
+        render();
+      } else {
+        await submitOrder(member,menu);
+      }
     };
   });
 
@@ -1709,13 +1777,25 @@ function bindMenuSheet(){
     btn.onclick=async()=>{
       const r=getSelR(); const menu=r?.menus?.find(m=>m.id===btn.dataset.menu); const member=S.menuSheet?.member;
       if(!menu||!member) return;
-      S.selectedMenu=menu;
-      document.querySelectorAll("[data-menu]").forEach(b=>{
-        const a=b.dataset.menu===menu.id;
-        b.style.background=a?"rgba(108,99,255,0.35)":"rgba(255,255,255,0.05)";
-        b.style.borderColor=a?"rgba(108,99,255,0.8)":"rgba(255,255,255,0.09)";
-      });
-      await submitOrder(member,menu);
+      if(S.multiSelect){
+        // 복수선택: 탭할 때마다 추가, 같은 메뉴 또 탭하면 하나 제거
+        const idx=S.selectedMenus.findIndex(m=>m.id===menu.id);
+        if(idx>=0){
+          S.selectedMenus=S.selectedMenus.filter((_,i)=>i!==idx);
+        } else {
+          S.selectedMenus=[...S.selectedMenus,{id:menu.id,name:menu.name,price:menu.price}];
+        }
+        render();
+      } else {
+        // 단일선택: 바로 주문
+        S.selectedMenu=menu;
+        document.querySelectorAll("[data-menu]").forEach(b=>{
+          const a=b.dataset.menu===menu.id;
+          b.style.background=a?"rgba(108,99,255,0.35)":"rgba(255,255,255,0.05)";
+          b.style.borderColor=a?"rgba(108,99,255,0.8)":"rgba(255,255,255,0.09)";
+        });
+        await submitOrder(member,menu);
+      }
     };
   });
 }
