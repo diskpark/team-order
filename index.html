@@ -24,7 +24,7 @@ input{font-family:inherit;}
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, setDoc, writeBatch, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-const VERSION = "v2.4";
+const VERSION = "v2.5";
 const firebaseConfig = {
   apiKey: "AIzaSyAQzhhO8NbhvUkNOjnjvVJgNNN4vx8KRXU",
   authDomain: "team-order-1cfb0.firebaseapp.com",
@@ -114,6 +114,8 @@ let S = {
   toast:null, toastTimer:null,
   dataInitialized:false,
   loadedTeams:false, loadedRestaurants:false,
+  myMemberId: localStorage.getItem("myMemberId")||null, // 내 이름 저장
+  chiefMode: false, // 총무 모드
   notices:[], // 공지사항 목록
   noticePopup:false, // 공지 팝업 열림
   noticeAdminMode:false, // 관리자 모드
@@ -554,11 +556,19 @@ function renderMain(){
 
   const menuPreview=""; // 제거됨
 
-  const memberGrid=members.map(m=>{
+  // 내 이름 맨 앞 정렬 (총무모드 아닐 때)
+  const myMember = members.find(m=>m.id===S.myMemberId);
+  const sortedMembers = (!S.chiefMode && myMember)
+    ? [myMember, ...members.filter(m=>m.id!==S.myMemberId)]
+    : members;
+
+  const memberGrid=sortedMembers.map(m=>{
     const order=getMyOrder(m.name); const done=!!order;
+    const isMe = m.id===S.myMemberId && !S.chiefMode;
     return `<div style="position:relative;width:100%">
-      <button data-member="${m.id}" style="background:${done?"rgba(60,200,120,0.12)":T.card};border:1.5px solid ${done?"rgba(60,200,120,0.4)":T.border};border-radius:12px;padding:10px 6px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;transition:all 0.15s;width:100%;min-height:64px">
-        <div style="font-size:${S.fontSizes.member}px;font-weight:800;color:${done?"#60c880":"#d0d0e8"};text-align:center;line-height:1.3;word-break:keep-all">${m.name}</div>
+      <button data-member="${m.id}" style="background:${done?"rgba(60,200,120,0.12)":isMe?"rgba(108,99,255,0.15)":T.card};border:${isMe?"2px solid rgba(108,99,255,0.7)":"1.5px solid "+(done?"rgba(60,200,120,0.4)":T.border)};border-radius:12px;padding:10px 6px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;transition:all 0.15s;width:100%;min-height:64px;position:relative">
+        ${isMe?`<div style="position:absolute;top:4px;left:6px;font-size:8px;color:#9d97ff;font-weight:700">나</div>`:""}
+        <div style="font-size:${S.fontSizes.member}px;font-weight:800;color:${done?"#60c880":isMe?"#c4c0ff":"#d0d0e8"};text-align:center;line-height:1.3;word-break:keep-all">${m.name}</div>
         ${done?`<div style="font-size:10px;color:#50a870;text-align:center;line-height:1.2;word-break:keep-all;padding:0 2px">${order.menu}</div>`:``}
       </button>
       ${m.isQuick?`<button data-quick-remove="${m.id}" style="position:absolute;top:-5px;right:-5px;background:#ff6060;border:none;border-radius:50%;width:18px;height:18px;color:#fff;font-size:11px;display:flex;align-items:center;justify-content:center;z-index:10;line-height:1">×</button>`:""}
@@ -629,6 +639,9 @@ function renderMain(){
         </button>
         <span style="font-size:10px;color:#404060;font-weight:600">${VERSION}</span>
         <div style="background:rgba(108,99,255,0.15);border:1px solid rgba(108,99,255,0.3);border-radius:20px;padding:3px 9px;font-size:11px;color:#9d97ff;font-weight:700">${myOrders.length}/${members.length}명</div>
+        <button id="chief-btn" style="background:${S.chiefMode?"linear-gradient(135deg,#ff9d60,#ffb860)":"rgba(255,255,255,0.07)"};border:1px solid ${S.chiefMode?"rgba(255,157,60,0.6)":"rgba(255,255,255,0.12)"};border-radius:10px;padding:0 10px;height:33px;font-size:11px;font-weight:800;color:${S.chiefMode?"#fff":"#808090"};white-space:nowrap">
+          ${S.chiefMode?"👑 총무":"총무"}
+        </button>
         <button id="settings-btn" style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:10px;width:33px;height:33px;display:flex;align-items:center;justify-content:center;font-size:16px">⚙️</button>
       </div>
     </div>
@@ -1109,7 +1122,10 @@ function renderSettings(){
     <div style="position:relative;z-index:1;background:#10101f;border:1px solid rgba(255,255,255,0.1);border-radius:24px 24px 0 0;height:88vh;display:flex;flex-direction:column;overflow:hidden;animation:slideUp 0.3s ease">
       <div style="padding:0 0 10px;display:flex;justify-content:center;flex-shrink:0;order:99"><div style="width:36px;height:4px;border-radius:2px;background:rgba(255,255,255,0.15);margin-top:8px"></div></div>
       <div style="padding:10px 15px 9px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;border-bottom:1px solid rgba(255,255,255,0.07)">
-        <div style="font-size:16px;font-weight:900;color:#fff">⚙️ 설정</div>
+        <div>
+          <div style="font-size:16px;font-weight:900;color:#fff">⚙️ 설정</div>
+          ${S.myMemberId?(()=>{const mm=S.myTeam?.members?.find(m=>m.id===S.myMemberId);return mm?`<div style="font-size:11px;color:#9d97ff;margin-top:1px">👤 ${mm.name}님으로 등록됨 <button id="reset-my-name" style="background:none;border:none;color:#5050a0;font-size:10px;text-decoration:underline;cursor:pointer">변경</button></div>`:'';})():`<div style="font-size:11px;color:#5050a0;margin-top:1px">👤 이름 미등록 (이름 탭하면 등록)</div>`}
+        </div>
         <div style="display:flex;align-items:center;gap:7px">
           <button id="change-team-btn" style="background:rgba(108,99,255,0.15);border:1px solid rgba(108,99,255,0.3);border-radius:20px;padding:5px 11px;font-size:11px;color:#9d97ff;font-weight:700">조 변경</button>
           <button id="st-close" style="background:rgba(255,255,255,0.07);border:none;border-radius:50%;width:30px;height:30px;color:#9090c0;font-size:14px;display:flex;align-items:center;justify-content:center">✕</button>
@@ -1332,6 +1348,12 @@ function bindBulkOrder(){
 
 function bindMain(){
   document.getElementById("phonebook-tab")?.addEventListener("click",()=>{S.phoneBookOpen=!S.phoneBookOpen;S.pbEditId=null;render();});
+  document.getElementById("chief-btn")?.addEventListener("click",()=>{
+    S.chiefMode=!S.chiefMode;
+    render();
+    if(S.chiefMode) showToast("👑 총무 모드 ON — 모든 팀원 주문 가능");
+    else showToast("👤 일반 모드 — 내 주문만 가능");
+  });
   document.getElementById("notice-btn")?.addEventListener("click",()=>{S.noticePopup=true;render();});
   document.getElementById("live-btn")?.addEventListener("click",()=>{S.liveBoard=true;render();});
   document.getElementById("settings-btn")?.addEventListener("click",()=>{S.settings=true;render();});
@@ -1373,6 +1395,17 @@ function bindMain(){
     btn.onclick=()=>{
       if(!S.selectedRestaurantId){showToast("⚠️ 먼저 식당을 선택해주세요");return;}
       const m=S.myTeam.members?.find(m=>m.id===btn.dataset.member);if(!m)return;
+      // 총무모드 아닐 때: 내 이름 미설정이면 이 이름으로 저장
+      if(!S.chiefMode){
+        if(!S.myMemberId){
+          S.myMemberId=m.id;
+          localStorage.setItem("myMemberId",m.id);
+          showToast(`👤 ${m.name}님으로 등록됐어요`);
+        } else if(m.id!==S.myMemberId){
+          showToast("👆 내 이름을 선택해주세요. 총무모드에서 다른 사람 주문 가능");
+          return;
+        }
+      }
       S.menuSheet={member:m}; S.selectedMenu=null; S.restaurantMenuPopup=null; render();
     };
   });
@@ -1498,7 +1531,19 @@ function bindLiveBoard(){
 function bindSettings(){
   document.getElementById("st-bg")?.addEventListener("click",()=>{S.settings=false;render();});
   document.getElementById("st-close")?.addEventListener("click",()=>{S.settings=false;render();});
-  document.getElementById("change-team-btn")?.addEventListener("click",()=>{localStorage.removeItem("myTeamDocId");S.myTeamDocId=null;S.settings=false;S.screen="teamSelect";S.myTeam=null;S.restaurantOrder=[];render();});
+  document.getElementById("change-team-btn")?.addEventListener("click",()=>{
+    localStorage.removeItem("myTeamDocId");
+    localStorage.removeItem("myMemberId");
+    S.myTeamDocId=null; S.myMemberId=null; S.chiefMode=false;
+    S.settings=false; S.screen="teamSelect"; S.myTeam=null; S.restaurantOrder=[];
+    render();
+  });
+  document.getElementById("reset-my-name")?.addEventListener("click",()=>{
+    localStorage.removeItem("myMemberId");
+    S.myMemberId=null;
+    showToast("👤 내 이름이 초기화됐어요. 이름을 탭해서 다시 등록하세요");
+    render();
+  });
   document.querySelectorAll("[data-stab]").forEach(btn=>{btn.onclick=()=>{S.settingsTab=btn.dataset.stab;render();};});
   document.getElementById("inp-no")?.addEventListener("input",e=>S.newMemberNo=e.target.value);
   document.getElementById("inp-name")?.addEventListener("input",e=>S.newMemberName=e.target.value);
