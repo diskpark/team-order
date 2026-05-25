@@ -24,7 +24,7 @@ input{font-family:inherit;}
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, setDoc, writeBatch, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-const VERSION = "v3.9";
+const VERSION = "v4.0";
 const firebaseConfig = {
   apiKey: "AIzaSyAQzhhO8NbhvUkNOjnjvVJgNNN4vx8KRXU",
   authDomain: "team-order-1cfb0.firebaseapp.com",
@@ -1777,8 +1777,14 @@ function renderRestaurantPopup(){
   const menuRows=(r.menus||[]).map(m=>{
     if(S.popupEditMenuId===m.id) return `<div style="background:rgba(108,99,255,0.1);border:1.5px solid rgba(108,99,255,0.4);border-radius:10px;padding:11px;margin-bottom:7px">
       <div style="display:flex;gap:6px;margin-bottom:7px">
-        <input id="pop-edit-mname" value="${S.popupEditMenuName}" placeholder="메뉴명" style="flex:1;height:40px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:8px;padding:0 10px;color:#e0e0f0;font-size:13px;outline:none"/>
-        <input id="pop-edit-mprice" type="number" value="${S.popupEditMenuPrice}" placeholder="가격" style="width:84px;height:40px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:8px;padding:0 8px;color:#e0e0f0;font-size:13px;outline:none;flex-shrink:0"/>
+        <div style="flex:1;display:flex;flex-direction:column;gap:4px">
+          <span style="font-size:10px;color:#9090c0;font-weight:700;padding-left:2px">품명</span>
+          <input id="pop-edit-mname" value="${S.popupEditMenuName}" placeholder="메뉴명" style="width:100%;height:40px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:8px;padding:0 10px;color:#e0e0f0;font-size:13px;outline:none"/>
+        </div>
+        <div style="width:84px;flex-shrink:0;display:flex;flex-direction:column;gap:4px">
+          <span style="font-size:10px;color:#9090c0;font-weight:700;padding-left:2px">가격</span>
+          <input id="pop-edit-mprice" type="number" value="${S.popupEditMenuPrice}" placeholder="0" style="width:100%;height:40px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:8px;padding:0 8px;color:#e0e0f0;font-size:13px;outline:none"/>
+        </div>
       </div>
       <div style="display:flex;gap:6px">
         <button id="pop-save-menu-edit" style="flex:1;height:38px;background:linear-gradient(135deg,#6c63ff,#9d97ff);border:none;border-radius:8px;color:#fff;font-size:13px;font-weight:700">저장</button>
