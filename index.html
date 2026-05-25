@@ -24,7 +24,7 @@ input{font-family:inherit;}
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, setDoc, writeBatch, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-const VERSION = "v2.6";
+const VERSION = "v2.7";
 const firebaseConfig = {
   apiKey: "AIzaSyAQzhhO8NbhvUkNOjnjvVJgNNN4vx8KRXU",
   authDomain: "team-order-1cfb0.firebaseapp.com",
@@ -114,8 +114,10 @@ let S = {
   toast:null, toastTimer:null,
   dataInitialized:false,
   loadedTeams:false, loadedRestaurants:false,
-  myMemberId: localStorage.getItem("myMemberId")||null, // 내 이름 저장
-  chiefMode: false, // 총무 모드
+  myMemberId: localStorage.getItem("myMemberId")||null,
+  chiefMode: false,
+  joinRequests:[], // 합석 요청 목록 (실시간)
+  showJoinPanel:false, // 합석 요청 패널
   notices:[], // 공지사항 목록
   noticePopup:false, // 공지 팝업 열림
   noticeAdminMode:false, // 관리자 모드
@@ -182,6 +184,12 @@ function initFirebase(){
   onSnapshot(collection(db,"phoneBook"), snap=>{
     S.phoneBooks = snap.docs.map(d=>({...d.data(),docId:d.id}))
       .sort((a,b)=>a.name.localeCompare(b.name,'ko'));
+    if(S.screen==="main") render();
+  });
+  // 합석 요청 실시간
+  onSnapshot(collection(db,"joinRequests"), snap=>{
+    S.joinRequests = snap.docs.map(d=>({...d.data(),docId:d.id}))
+      .filter(r=>r.status==="pending"||r.status==="accepted");
     if(S.screen==="main") render();
   });
   // 식당 순서 실시간 공유 (조별)
@@ -292,7 +300,9 @@ function getSelR(){ return S.restaurants.find(r=>r.docId===S.selectedRestaurantI
 
 async function submitOrder(member,menu){
   const r=getSelR(); if(!r||!member||!menu) return;
-  const order={team:S.myTeam.name,member:member.name,restaurant:r.name,restaurantEmoji:r.emoji,menu:menu.name,price:menu.price,at:new Date().toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit"}),date:todayKey(),timestamp:Date.now()};
+  const memberObj=(S.myTeam.members||[]).find(m=>m.name===member.name);
+  const guestTeam=member.isGuest?member.teamName:null;
+  const order={team:S.myTeam.name,member:member.name,restaurant:r.name,restaurantEmoji:r.emoji,menu:menu.name,price:menu.price,at:new Date().toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit"}),date:todayKey(),timestamp:Date.now(),...(guestTeam?{guestTeam}:{})};
   try{
     const ex=S.allOrders.find(o=>o.team===S.myTeam.name&&o.member===member.name);
     if(ex?.docId) await deleteDoc(doc(db,"orders",ex.docId));
@@ -383,6 +393,57 @@ async function savePhoneBookEdit(){
   const name=S.pbEditName.trim(); if(!name) return;
   await setDoc(doc(db,"phoneBook",pb.docId),{...pb,name,mobile:S.pbEditMobile||"",tel:S.pbEditTel||""});
   S.pbEditId=null; showToast("✅ 수정됨");
+}
+
+// ── 합석 주문 ────────────────────────────────────────────────────
+async function sendJoinRequest(targetTeamDocId){
+  const target=S.teams.find(t=>t.docId===targetTeamDocId);
+  if(!target||!S.myTeam) return;
+  // 이미 pending 요청 있는지 확인
+  const existing=S.joinRequests.find(r=>r.fromTeamId===S.myTeam.docId&&r.toTeamId===targetTeamDocId&&r.status==="pending");
+  if(existing){showToast("⚠️ 이미 요청 중입니다");return;}
+  const id=`jr_${uid()}`;
+  await setDoc(doc(db,"joinRequests",id),{
+    id, fromTeamId:S.myTeam.docId, fromTeamName:S.myTeam.name,
+    toTeamId:targetTeamDocId, toTeamName:target.name,
+    status:"pending", timestamp:Date.now(),
+    date:todayKey()
+  });
+  showToast(`✅ ${target.name}에 합석 요청 전송!`);
+  S.showJoinPanel=false; render();
+}
+
+async function acceptJoinRequest(docId){
+  const r=S.joinRequests.find(r=>r.docId===docId); if(!r) return;
+  await setDoc(doc(db,"joinRequests",docId),{...r,status:"accepted",acceptedAt:Date.now()});
+  showToast(`✅ ${r.fromTeamName} 합석 수락!`);
+}
+
+async function rejectJoinRequest(docId){
+  const r=S.joinRequests.find(r=>r.docId===docId); if(!r) return;
+  await deleteDoc(doc(db,"joinRequests",docId));
+  showToast(`❌ 합석 거절됨`);
+}
+
+async function cancelJoinRequest(docId){
+  await deleteDoc(doc(db,"joinRequests",docId));
+  showToast("취소됨");
+}
+
+// 합석된 팀원 포함한 전체 멤버 반환
+function getJoinedMembers(){
+  if(!S.myTeam) return [];
+  const myMembers=(S.myTeam.members||[]).map(m=>({...m,teamName:S.myTeam.name,teamId:S.myTeam.docId}));
+  // 내 조에 합석 수락된 팀 멤버 추가
+  const accepted=S.joinRequests.filter(r=>r.toTeamId===S.myTeam.docId&&r.status==="accepted"&&r.date===todayKey());
+  const guestMembers=[];
+  accepted.forEach(r=>{
+    const guestTeam=S.teams.find(t=>t.docId===r.fromTeamId);
+    if(guestTeam){
+      (guestTeam.members||[]).forEach(m=>guestMembers.push({...m,teamName:r.fromTeamName,teamId:r.fromTeamId,isGuest:true}));
+    }
+  });
+  return [...myMembers,...guestMembers];
 }
 
 // ── 공지사항 ─────────────────────────────────────────────────────
@@ -482,6 +543,7 @@ function render(){
   if(S.screen==="main"){
     app.innerHTML=renderMain();
     bindMain();
+    if(S.showJoinPanel) bindJoinPanel();
     if(S.phoneBookOpen) bindPhoneBook();
     if(S.bulkOrder) bindBulkOrder();
     if(S.menuSheet) bindMenuSheet();
@@ -534,7 +596,12 @@ function renderMain(){
   document.body.style.color=T.text;
   const myOrders=S.allOrders.filter(o=>o.team===S.myTeam.name);
   const selR=getSelR();
-  const members=S.myTeam.members||[];
+  const members=getJoinedMembers();
+  const myMembers=S.myTeam.members||[];
+  // 내 조에 합석 요청 들어온 것 (pending)
+  const incomingReqs=S.joinRequests.filter(r=>r.toTeamId===S.myTeam.docId&&r.status==="pending"&&r.date===todayKey());
+  // 내 조가 보낸 요청
+  const outgoingReq=S.joinRequests.find(r=>r.fromTeamId===S.myTeam.docId&&r.date===todayKey());
   const orderedR=getOrderedRestaurants();
 
   // 최근 주문한 식당 docId 순서 (중복제거, 최신순)
@@ -586,7 +653,8 @@ function renderMain(){
     return `<div style="position:relative;width:100%">
       <button data-member="${m.id}" style="background:${done?"rgba(60,200,120,0.12)":isMe?"rgba(108,99,255,0.15)":T.card};border:${isMe?"2px solid rgba(108,99,255,0.7)":"1.5px solid "+(done?"rgba(60,200,120,0.4)":T.border)};border-radius:12px;padding:10px 6px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;transition:all 0.15s;width:100%;min-height:64px;position:relative">
         ${isMe?`<div style="position:absolute;top:4px;left:6px;font-size:8px;color:#9d97ff;font-weight:700">나</div>`:""}
-        <div style="font-size:${S.fontSizes.member}px;font-weight:800;color:${done?"#60c880":isMe?"#c4c0ff":"#d0d0e8"};text-align:center;line-height:1.3;word-break:keep-all">${m.name}</div>
+        <div style="font-size:${S.fontSizes.member}px;font-weight:800;color:${done?"#60c880":isMe?"#c4c0ff":m.isGuest?"#ff9d60":"#d0d0e8"};text-align:center;line-height:1.3;word-break:keep-all">${m.name}</div>
+        ${m.isGuest?`<div style="font-size:9px;color:#ff9d60;font-weight:700">${m.teamName}</div>`:""}
         ${done?`<div style="font-size:10px;color:#50a870;text-align:center;line-height:1.2;word-break:keep-all;padding:0 2px">${order.menu}</div>`:``}
       </button>
       ${m.isQuick?`<button data-quick-remove="${m.id}" style="position:absolute;top:-5px;right:-5px;background:#ff6060;border:none;border-radius:50%;width:18px;height:18px;color:#fff;font-size:11px;display:flex;align-items:center;justify-content:center;z-index:10;line-height:1">×</button>`:""}
@@ -603,6 +671,19 @@ function renderMain(){
       const hasPhone=!!(rData?.phoneCall||rData?.phoneSMS);
       const menuCount={};
       g.items.forEach(o=>{if(!menuCount[o.menu])menuCount[o.menu]={name:o.menu,price:o.price,count:0};menuCount[o.menu].count++;});
+      // 정산: 팀별 분리
+      const teamSplit={};
+      g.items.forEach(o=>{
+        const tname=o.guestTeam||S.myTeam.name;
+        if(!teamSplit[tname])teamSplit[tname]={name:tname,items:[],total:0};
+        teamSplit[tname].items.push(o);
+        teamSplit[tname].total+=o.price;
+      });
+      const splitTeams=Object.values(teamSplit);
+      const splitHTML=splitTeams.length>1?splitTeams.map(ts=>`<div style="background:rgba(255,255,255,0.03);border-radius:8px;padding:7px 10px;margin-top:6px;display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:12px;color:#9090a0">${ts.name} (${ts.items.length}명)</span>
+        <span style="font-size:13px;font-weight:800;color:#9d97ff">${fmt(ts.total)}</span>
+      </div>`).join(""):"";
       return `<div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:14px;padding:13px 14px;margin-bottom:10px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
           <div style="display:flex;align-items:center;gap:7px">
@@ -630,6 +711,7 @@ function renderMain(){
           <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:800;margin-top:5px;padding-top:5px;border-top:1px solid rgba(255,255,255,0.06)">
             <span style="color:#fff">소계</span><span style="color:#9d97ff">${fmt(g.items.reduce((s,o)=>s+o.price,0))}</span>
           </div>
+          ${splitHTML?`<div style="margin-top:8px;padding-top:8px;border-top:1px dashed rgba(255,255,255,0.08)"><div style="font-size:10px;color:#5050a0;font-weight:700;margin-bottom:4px">📊 정산 (팀별)</div>${splitHTML}</div>`:""}
         </div>
       </div>`;
     }).join("");
@@ -656,7 +738,10 @@ function renderMain(){
           <span style="width:5px;height:5px;border-radius:50%;background:#ff6b6b;display:inline-block;animation:pulse 1.5s infinite"></span>LIVE
         </button>
         <span style="font-size:10px;color:#404060;font-weight:600">${VERSION}</span>
-        <div style="background:rgba(108,99,255,0.15);border:1px solid rgba(108,99,255,0.3);border-radius:20px;padding:3px 9px;font-size:11px;color:#9d97ff;font-weight:700">${myOrders.length}/${members.length}명</div>
+        <div style="background:rgba(108,99,255,0.15);border:1px solid rgba(108,99,255,0.3);border-radius:20px;padding:3px 9px;font-size:11px;color:#9d97ff;font-weight:700">${myOrders.length}/${myMembers.length}${members.length>myMembers.length?`+${members.length-myMembers.length}`:""}</div>
+        <button id="join-btn" style="background:${(outgoingReq||incomingReqs.length>0)?"rgba(108,99,255,0.25)":"rgba(255,255,255,0.07)"};border:1px solid ${(outgoingReq||incomingReqs.length>0)?"rgba(108,99,255,0.5)":"rgba(255,255,255,0.12)"};border-radius:10px;padding:0 10px;height:33px;font-size:11px;font-weight:800;color:${(outgoingReq||incomingReqs.length>0)?"#c4c0ff":"#808090"};white-space:nowrap;position:relative">
+          🤝${incomingReqs.length>0?`<span style="position:absolute;top:-4px;right:-4px;background:#ff6b6b;border-radius:50%;width:14px;height:14px;font-size:9px;color:#fff;display:flex;align-items:center;justify-content:center">${incomingReqs.length}</span>`:""}
+        </button>
         <button id="chief-btn" style="background:${S.chiefMode?"linear-gradient(135deg,#ff9d60,#ffb860)":"rgba(255,255,255,0.07)"};border:1px solid ${S.chiefMode?"rgba(255,157,60,0.6)":"rgba(255,255,255,0.12)"};border-radius:10px;padding:0 10px;height:33px;font-size:11px;font-weight:800;color:${S.chiefMode?"#fff":"#808090"};white-space:nowrap">
           ${S.chiefMode?"👑 총무":"총무"}
         </button>
@@ -708,6 +793,8 @@ function renderMain(){
       ${summaryHTML}
     </div>
   </div>
+  ${S.showJoinPanel?renderJoinPanel():""}
+  ${renderJoinIncomingAlert()}
   ${S.phoneBookOpen?renderPhoneBookPanel():""}
   ${S.noticePopup?renderNoticePopup():""}
   ${S.bulkOrder?renderBulkOrder():""}
@@ -1059,6 +1146,75 @@ function renderBulkOrder(){
   </div>`;
 }
 
+// ── 합석 패널 ────────────────────────────────────────────────────
+function renderJoinPanel(){
+  const otherTeams=S.teams.filter(t=>t.docId!==S.myTeam?.docId);
+  const outgoing=S.joinRequests.find(r=>r.fromTeamId===S.myTeam?.docId&&r.date===todayKey());
+  const accepted=S.joinRequests.filter(r=>r.toTeamId===S.myTeam?.docId&&r.status==="accepted"&&r.date===todayKey());
+
+  return `<div style="position:fixed;inset:0;z-index:250;display:flex;flex-direction:column;justify-content:flex-start">
+    <div id="join-bg" style="position:absolute;inset:0;background:rgba(0,0,0,0.8);backdrop-filter:blur(6px)"></div>
+    <div style="position:relative;z-index:1;background:#13132a;border-bottom:1px solid rgba(255,255,255,0.1);border-radius:0 0 22px 22px;max-height:88vh;display:flex;flex-direction:column;overflow:hidden;animation:slideDown 0.25s ease">
+      <div style="padding:14px 16px 10px;border-bottom:1px solid rgba(255,255,255,0.07);flex-shrink:0;display:flex;align-items:center;justify-content:space-between">
+        <div>
+          <div style="font-size:16px;font-weight:900;color:#fff">🤝 합석 주문</div>
+          <div style="font-size:11px;color:#6060a0;margin-top:1px">${S.myTeam?.name} · 다른 조와 함께 주문</div>
+        </div>
+        <button id="join-close" style="background:rgba(255,255,255,0.07);border:none;border-radius:50%;width:30px;height:30px;color:#9090c0;font-size:13px;display:flex;align-items:center;justify-content:center">✕</button>
+      </div>
+      <div style="overflow-y:auto;flex:1;padding:14px 15px 20px">
+        <!-- 현재 합석 상태 -->
+        ${outgoing?`<div style="background:${outgoing.status==="accepted"?"rgba(60,200,120,0.1)":"rgba(255,157,60,0.1)"};border:1.5px solid ${outgoing.status==="accepted"?"rgba(60,200,120,0.4)":"rgba(255,157,60,0.4)"};border-radius:14px;padding:13px 15px;margin-bottom:14px">
+          <div style="font-size:13px;font-weight:800;color:${outgoing.status==="accepted"?"#60c880":"#ff9d60"}">${outgoing.status==="accepted"?"✅ 합석 수락됨":"⏳ 합석 요청 중"}</div>
+          <div style="font-size:12px;color:#9090a0;margin-top:4px">${outgoing.toTeamName}에 요청 전송됨</div>
+          ${outgoing.status==="accepted"?`<div style="font-size:11px;color:#60c880;margin-top:4px">이제 ${outgoing.toTeamName} 주문 화면에서 주문하세요!</div>`:""}
+          <button data-cancel-join="${outgoing.docId}" style="margin-top:10px;background:rgba(255,80,80,0.12);border:1px solid rgba(255,80,80,0.28);border-radius:8px;padding:6px 14px;color:#ff8080;font-size:12px;font-weight:700">요청 취소</button>
+        </div>`:""}
+        <!-- 수락된 합석 팀 표시 -->
+        ${accepted.length>0?`<div style="background:rgba(60,200,120,0.08);border:1px solid rgba(60,200,120,0.25);border-radius:12px;padding:11px 14px;margin-bottom:14px">
+          <div style="font-size:11px;color:#60c880;font-weight:700;margin-bottom:6px">✅ 합석 중인 팀</div>
+          ${accepted.map(r=>`<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px">
+            <span style="font-size:14px;font-weight:700;color:#fff">🤝 ${r.fromTeamName}</span>
+            <button data-reject-join="${r.docId}" style="background:rgba(255,80,80,0.12);border:1px solid rgba(255,80,80,0.28);border-radius:7px;padding:4px 10px;color:#ff8080;font-size:11px">내보내기</button>
+          </div>`).join("")}
+        </div>`:""}
+        <!-- 조 선택 -->
+        ${!outgoing?`<div style="font-size:12px;color:#5050a0;font-weight:700;margin-bottom:10px">합류할 조를 선택하세요</div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          ${otherTeams.map(t=>`<button data-send-join="${t.docId}" style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.09);border-radius:12px;padding:13px 15px;display:flex;align-items:center;justify-content:space-between;width:100%">
+            <div style="text-align:left">
+              <div style="font-size:15px;font-weight:800;color:#fff">${t.name}</div>
+              <div style="font-size:11px;color:#5050a0;margin-top:2px">${(t.members||[]).length}명</div>
+            </div>
+            <span style="font-size:13px;color:#9d97ff;font-weight:700">요청 →</span>
+          </button>`).join("")}
+        </div>`:`<div style="text-align:center;color:#5050a0;font-size:13px;padding:16px">요청 처리 중...</div>`}
+      </div>
+    </div>
+  </div>`;
+}
+
+// ── 합석 수신 알림 ──────────────────────────────────────────────
+function renderJoinIncomingAlert(){
+  const incoming=S.joinRequests.filter(r=>r.toTeamId===S.myTeam?.docId&&r.status==="pending"&&r.date===todayKey());
+  if(incoming.length===0) return "";
+  return `<div style="position:fixed;bottom:30px;left:50%;transform:translateX(-50%);z-index:500;width:calc(100% - 32px);max-width:400px">
+    ${incoming.map(r=>`<div style="background:linear-gradient(135deg,#1a0a3e,#2d1b69);border:1.5px solid rgba(108,99,255,0.6);border-radius:16px;padding:14px 16px;margin-bottom:8px;box-shadow:0 8px 32px rgba(0,0,0,0.5);animation:fadeUp 0.3s ease">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+        <span style="font-size:24px">🤝</span>
+        <div>
+          <div style="font-size:14px;font-weight:900;color:#fff">${r.fromTeamName} 합석 요청!</div>
+          <div style="font-size:11px;color:#9090a0;margin-top:1px">함께 주문하고 싶다고 합니다</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button data-accept-join="${r.docId}" style="flex:1;height:40px;background:linear-gradient(135deg,#6c63ff,#9d97ff);border:none;border-radius:10px;color:#fff;font-size:13px;font-weight:800">✅ 수락</button>
+        <button data-reject-join="${r.docId}" style="flex:1;height:40px;background:rgba(255,80,80,0.15);border:1px solid rgba(255,80,80,0.3);border-radius:10px;color:#ff8080;font-size:13px;font-weight:700">❌ 거절</button>
+      </div>
+    </div>`).join("")}
+  </div>`;
+}
+
 // ── 라이브보드 ────────────────────────────────────────────────────
 function renderLiveBoard(){
   const ticker=S.allOrders.slice(-10).reverse();
@@ -1311,6 +1467,24 @@ function renderRestaurantPopup(){
 }
 
 // ── 바인딩 ────────────────────────────────────────────────────────
+// ── 합석 바인딩 ────────────────────────────────────────────────────
+function bindJoinPanel(){
+  document.getElementById("join-bg")?.addEventListener("click",()=>{S.showJoinPanel=false;render();});
+  document.getElementById("join-close")?.addEventListener("click",()=>{S.showJoinPanel=false;render();});
+  document.querySelectorAll("[data-send-join]").forEach(btn=>{
+    btn.onclick=()=>sendJoinRequest(btn.dataset.sendJoin);
+  });
+  document.querySelectorAll("[data-cancel-join]").forEach(btn=>{
+    btn.onclick=()=>cancelJoinRequest(btn.dataset.cancelJoin);
+  });
+  document.querySelectorAll("[data-accept-join]").forEach(btn=>{
+    btn.onclick=()=>acceptJoinRequest(btn.dataset.acceptJoin);
+  });
+  document.querySelectorAll("[data-reject-join]").forEach(btn=>{
+    btn.onclick=()=>rejectJoinRequest(btn.dataset.rejectJoin);
+  });
+}
+
 // ── 전화번호부 바인딩 ─────────────────────────────────────────────
 function bindPhoneBook(){
   document.getElementById("pb-bg")?.addEventListener("click",()=>{S.phoneBookOpen=false;S.pbEditId=null;render();});
@@ -1366,6 +1540,10 @@ function bindBulkOrder(){
 
 function bindMain(){
   document.getElementById("phonebook-tab")?.addEventListener("click",()=>{S.phoneBookOpen=!S.phoneBookOpen;S.pbEditId=null;render();});
+  document.getElementById("join-btn")?.addEventListener("click",()=>{S.showJoinPanel=true;render();});
+  // 합석 수락/거절 (알림 팝업)
+  document.querySelectorAll("[data-accept-join]").forEach(btn=>{btn.onclick=()=>acceptJoinRequest(btn.dataset.acceptJoin);});
+  document.querySelectorAll("[data-reject-join]").forEach(btn=>{btn.onclick=()=>rejectJoinRequest(btn.dataset.rejectJoin);});
   document.getElementById("chief-btn")?.addEventListener("click",()=>{
     S.chiefMode=!S.chiefMode;
     render();
