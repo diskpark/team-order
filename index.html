@@ -24,7 +24,7 @@ input{font-family:inherit;}
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, setDoc, writeBatch, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-const VERSION = "v2.9";
+const VERSION = "v3.0";
 const firebaseConfig = {
   apiKey: "AIzaSyAQzhhO8NbhvUkNOjnjvVJgNNN4vx8KRXU",
   authDomain: "team-order-1cfb0.firebaseapp.com",
@@ -312,11 +312,6 @@ async function submitOrder(member,menu){
     const newRef=doc(collection(db,"orders")); b.set(newRef,order);
     await b.commit();
     S.menuSheet=null; S.selectedMenu=null; S.multiSelect=false; S.selectedMenus=[];
-    // 합석 멤버면 주문 후 자동으로 합석 요청 삭제
-    if(member.isGuest){
-      const jr=S.joinRequests.find(r=>r.fromTeamId===member.teamId&&r.toTeamId===S.myTeam.docId&&r.status==="accepted");
-      if(jr) deleteDoc(doc(db,"joinRequests",jr.docId)).catch(()=>{});
-    }
     showToast(`✅ ${member.name} · ${menu.name}`);
   }catch(e){showToast("❌ 저장 실패");}
 }
@@ -435,29 +430,51 @@ async function sendJoinRequest(targetTeamDocId){
   const target=S.teams.find(t=>t.docId===targetTeamDocId);
   if(!target||!S.myTeam) return;
   // 이미 pending 요청 있는지 확인
-  const existing=S.joinRequests.find(r=>r.fromTeamId===S.myTeam.docId&&r.toTeamId===targetTeamDocId&&r.status==="pending");
+  const existing=S.joinRequests.find(r=>r.fromTeamId===S.myTeam.docId&&r.status==="pending"&&r.date===todayKey());
   if(existing){showToast("⚠️ 이미 요청 중입니다");return;}
-  // 총무 본인만 넘김 (myMemberId 기준)
-  const myMember=(S.myTeam.members||[]).find(m=>m.id===S.myMemberId);
-  if(!myMember){showToast("⚠️ 내 이름을 먼저 등록해주세요 (설정에서 확인)");return;}
-  const fromMembers=[{id:myMember.id,name:myMember.name}];
+  // 현재 주문된 내역 수집
+  const myOrdersNow=S.allOrders.filter(o=>o.team===S.myTeam.name);
+  if(myOrdersNow.length===0){showToast("⚠️ 주문 내역이 없습니다. 먼저 주문하세요");return;}
+  // 주문 스냅샷 저장
+  const orderSnapshot=myOrdersNow.map(o=>({
+    member:o.member, menu:o.menu, price:o.price,
+    restaurant:o.restaurant, restaurantEmoji:o.restaurantEmoji
+  }));
   const id=`jr_${uid()}`;
   await setDoc(doc(db,"joinRequests",id),{
-    id, fromTeamId:S.myTeam.docId, fromTeamName:S.myTeam.name,
+    id,
+    fromTeamId:S.myTeam.docId, fromTeamName:S.myTeam.name,
     toTeamId:targetTeamDocId, toTeamName:target.name,
-    fromMembers, // 합류할 특정 멤버만
+    orderSnapshot, // 주문 내역 스냅샷
     status:"pending", timestamp:Date.now(),
     date:todayKey()
   });
-  const whoText=`${myMember.name}님 (총무)`;
-  showToast(`✅ ${target.name}에 합석 요청 전송! (${whoText})`);
+  showToast(`✅ ${target.name}에 ${myOrdersNow.length}건 주문 토스!`);
   S.showJoinPanel=false; render();
 }
 
 async function acceptJoinRequest(docId){
   const r=S.joinRequests.find(r=>r.docId===docId); if(!r) return;
+  // 주문 스냅샷을 우리 조 orders에 복사 (guestTeam 태그 붙여서)
+  if(r.orderSnapshot&&r.orderSnapshot.length>0){
+    const b=writeBatch(db);
+    const at=new Date().toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit"});
+    r.orderSnapshot.forEach(o=>{
+      const ref=doc(collection(db,"orders"));
+      b.set(ref,{
+        team:S.myTeam.name, // 우리 조 이름으로 저장
+        member:o.member,
+        restaurant:o.restaurant, restaurantEmoji:o.restaurantEmoji,
+        menu:o.menu, price:o.price,
+        at, date:todayKey(), timestamp:Date.now(),
+        guestTeam:r.fromTeamName, // 지게차 표시용
+        joinRequestId:docId
+      });
+    });
+    await b.commit();
+  }
   await setDoc(doc(db,"joinRequests",docId),{...r,status:"accepted",acceptedAt:Date.now()});
-  showToast(`✅ ${r.fromTeamName} 합석 수락!`);
+  showToast(`✅ ${r.fromTeamName} 주문 ${r.orderSnapshot?.length||0}건 수락!`);
 }
 
 async function rejectJoinRequest(docId){
@@ -475,20 +492,15 @@ async function cancelJoinRequest(docId){
 function getJoinedMembers(){
   if(!S.myTeam) return [];
   const myMembers=(S.myTeam.members||[]).map(m=>({...m,teamName:S.myTeam.name,teamId:S.myTeam.docId}));
-  // 내 조에 합석 수락된 팀 멤버 추가 (fromMembers 있으면 그 사람만)
+  // 수락된 합석 → 팀 카드 하나씩 추가 (가상 멤버)
   const accepted=S.joinRequests.filter(r=>r.toTeamId===S.myTeam.docId&&r.status==="accepted"&&r.date===todayKey());
-  const guestMembers=[];
-  accepted.forEach(r=>{
-    const guestTeam=S.teams.find(t=>t.docId===r.fromTeamId);
-    if(!guestTeam) return;
-    const allTeamMembers=guestTeam.members||[];
-    // fromMembers 지정됐으면 그 사람만, 아니면 전체
-    const targetMembers=(r.fromMembers&&r.fromMembers.length>0)
-      ?allTeamMembers.filter(m=>r.fromMembers.some(fm=>fm.id===m.id))
-      :allTeamMembers;
-    targetMembers.forEach(m=>guestMembers.push({...m,teamName:r.fromTeamName,teamId:r.fromTeamId,isGuest:true}));
-  });
-  return [...myMembers,...guestMembers];
+  const guestCards=accepted.map(r=>({
+    id:`guest_${r.docId}`, name:r.fromTeamName,
+    teamName:r.fromTeamName, teamId:r.fromTeamId,
+    isGuestCard:true, joinRequestId:r.docId,
+    orderCount:(r.orderSnapshot||[]).length
+  }));
+  return [...myMembers,...guestCards];
 }
 
 // ── 공지사항 ─────────────────────────────────────────────────────
