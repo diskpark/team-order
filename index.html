@@ -24,7 +24,7 @@ input{font-family:inherit;}
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, setDoc, writeBatch, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-const VERSION = "v2.3";
+const VERSION = "v2.4";
 const firebaseConfig = {
   apiKey: "AIzaSyAQzhhO8NbhvUkNOjnjvVJgNNN4vx8KRXU",
   authDomain: "team-order-1cfb0.firebaseapp.com",
@@ -99,6 +99,10 @@ let S = {
   restaurantMenuPopup:null, // 식당 메뉴 팝업 {restaurant}
   bulkOrder:null,    // 단체주문 모드 {restaurantDocId}
   bulkQty:{},        // {menuId: 수량}
+  phoneBookOpen:false, // 전화번호부 패널
+  phoneBooks:[],       // 공용 전화번호부 목록
+  pbNewName:"", pbNewMobile:"", pbNewTel:"", // 추가 폼
+  pbEditId:null, pbEditName:"", pbEditMobile:"", pbEditTel:"", // 수정 폼
   // 스킨/폰트 설정
   skin: localStorage.getItem("skin")||"dark",
   fontFamily: localStorage.getItem("fontFamily")||"default",
@@ -164,6 +168,11 @@ function initFirebase(){
   onSnapshot(collection(db,"notices"), snap=>{
     S.notices = snap.docs.map(d=>({...d.data(),docId:d.id}))
       .sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
+    if(S.screen==="main") render();
+  });
+  onSnapshot(collection(db,"phoneBook"), snap=>{
+    S.phoneBooks = snap.docs.map(d=>({...d.data(),docId:d.id}))
+      .sort((a,b)=>a.name.localeCompare(b.name,'ko'));
     if(S.screen==="main") render();
   });
   onSnapshot(collection(db,"orders"), snap=>{
@@ -327,6 +336,29 @@ function callRestaurant(restaurantName){
   else showToast("⚠️ 전화번호를 먼저 등록해주세요");
 }
 
+// ── 전화번호부 (공용) ────────────────────────────────────────────
+async function addPhoneBook(){
+  const name=S.pbNewName.trim(); if(!name){showToast("⚠️ 이름 입력");return;}
+  const id=`pb_${uid()}`;
+  await setDoc(doc(db,"phoneBook",id),{id,name,mobile:S.pbNewMobile||"",tel:S.pbNewTel||"",timestamp:Date.now()});
+  S.pbNewName=""; S.pbNewMobile=""; S.pbNewTel="";
+  showToast(`✅ ${name} 추가`);
+}
+async function deletePhoneBook(docId,name){
+  if(!confirm(`⚠️ "${name}"
+
+이 전화번호는 모든 조가 함께 사용하는 공용 정보입니다.
+정말 삭제하시겠습니까?`)) return;
+  await deleteDoc(doc(db,"phoneBook",docId));
+  showToast("🗑 삭제됨");
+}
+async function savePhoneBookEdit(){
+  const pb=S.phoneBooks.find(p=>p.docId===S.pbEditId); if(!pb) return;
+  const name=S.pbEditName.trim(); if(!name) return;
+  await setDoc(doc(db,"phoneBook",pb.docId),{...pb,name,mobile:S.pbEditMobile||"",tel:S.pbEditTel||""});
+  S.pbEditId=null; showToast("✅ 수정됨");
+}
+
 // ── 공지사항 ─────────────────────────────────────────────────────
 const ADMIN_PW = "31014";
 
@@ -424,6 +456,7 @@ function render(){
   if(S.screen==="main"){
     app.innerHTML=renderMain();
     bindMain();
+    if(S.phoneBookOpen) bindPhoneBook();
     if(S.bulkOrder) bindBulkOrder();
     if(S.menuSheet) bindMenuSheet();
     if(S.liveBoard) bindLiveBoard();
@@ -502,6 +535,16 @@ function renderMain(){
       ${active?`<div style="position:absolute;bottom:-2px;left:50%;transform:translateX(-50%);width:6px;height:6px;border-radius:50%;background:#9d97ff;pointer-events:none"></div>`:""}
     </div>`;
   }).join("");
+
+  // 전화번호부 탭 (맨 오른쪽 고정)
+  const pbTab=`<div style="position:relative;flex-shrink:0;min-width:64px">
+    <button id="phonebook-tab" style="background:${S.phoneBookOpen?"rgba(60,200,120,0.2)":"rgba(255,255,255,0.04)"};border:2px solid ${S.phoneBookOpen?"rgba(60,200,120,0.7)":"rgba(255,255,255,0.08)"};border-radius:14px;padding:9px 10px 5px;display:flex;flex-direction:column;align-items:center;gap:2px;color:${S.phoneBookOpen?"#60c880":"#606080"};transition:all 0.18s;width:100%">
+      <span style="font-size:20px">📞</span>
+      <span style="font-size:${S.fontSizes.restaurant}px;font-weight:700;white-space:nowrap">전화번호</span>
+      <div style="height:14px"></div>
+    </button>
+    ${S.phoneBooks.length>0?`<span style="position:absolute;top:-5px;right:-5px;background:#60c880;border-radius:20px;font-size:9px;padding:1px 5px;color:#fff;font-weight:800;pointer-events:none">${S.phoneBooks.length}</span>`:""}
+  </div>`;
 
   const menuPreview=""; // 제거됨
 
@@ -585,7 +628,7 @@ function renderMain(){
     </div>
     <!-- 식당 탭 (최근주문 먼저, NEW 마크) -->
     <div style="padding:7px 11px 6px;background:${T.header};border-bottom:1px solid ${T.border};flex-shrink:0">
-      <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:2px">${rTabs}</div>
+      <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:2px">${rTabs}${pbTab}</div>
     </div>
 
     <!-- 최근주문 탭 -->
@@ -628,6 +671,7 @@ function renderMain(){
       ${summaryHTML}
     </div>
   </div>
+  ${S.phoneBookOpen?renderPhoneBookPanel():""}
   ${S.noticePopup?renderNoticePopup():""}
   ${S.bulkOrder?renderBulkOrder():""}
   ${S.restaurantMenuPopup?renderRestaurantMenuPopup():""}
@@ -773,6 +817,68 @@ function renderRestaurantMenuPopup(){
       <div style="padding:10px 14px 16px;flex-shrink:0;border-top:1px solid rgba(255,255,255,0.07);display:flex;gap:8px">
         <button id="rmp-bulk" style="flex:1;height:44px;background:rgba(255,157,60,0.15);border:1.5px solid rgba(255,157,60,0.4);border-radius:12px;color:#ff9d60;font-size:13px;font-weight:800">🛒 단체주문</button>
         <button id="rmp-order" style="flex:1;height:44px;background:linear-gradient(135deg,#6c63ff,#9d97ff);border:none;border-radius:12px;color:#fff;font-size:13px;font-weight:800">메뉴 선택하기 →</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+// ── 전화번호부 패널 ──────────────────────────────────────────────
+function renderPhoneBookPanel(){
+  const rows=S.phoneBooks.map(pb=>{
+    if(S.pbEditId===pb.docId){
+      return '<div style="background:rgba(60,200,120,0.08);border:1.5px solid rgba(60,200,120,0.3);border-radius:12px;padding:12px;margin-bottom:8px">'
+        +'<div style="font-size:10px;color:#60c880;font-weight:700;margin-bottom:8px">✏️ 수정 중 · 모든 조에 반영됩니다</div>'
+        +'<input id="pb-edit-name" value="'+S.pbEditName+'" placeholder="이름/업체명" style="width:100%;height:38px;background:rgba(255,255,255,0.07);border:1px solid rgba(60,200,120,0.3);border-radius:8px;padding:0 10px;color:#e0e0f0;font-size:13px;outline:none;margin-bottom:6px"/>'
+        +'<div style="display:flex;gap:6px;margin-bottom:7px">'
+        +'<input id="pb-edit-mobile" value="'+S.pbEditMobile+'" placeholder="📱 휴대폰" type="tel" style="flex:1;height:38px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.13);border-radius:8px;padding:0 9px;color:#e0e0f0;font-size:12px;outline:none"/>'
+        +'<input id="pb-edit-tel" value="'+S.pbEditTel+'" placeholder="☎️ 일반전화" type="tel" style="flex:1;height:38px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.13);border-radius:8px;padding:0 9px;color:#e0e0f0;font-size:12px;outline:none"/>'
+        +'</div>'
+        +'<div style="display:flex;gap:6px">'
+        +'<button id="pb-save-edit" style="flex:1;height:36px;background:linear-gradient(135deg,#10b981,#34d399);border:none;border-radius:8px;color:#fff;font-size:12px;font-weight:700">저장</button>'
+        +'<button id="pb-cancel-edit" style="flex:1;height:36px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#9090c0;font-size:12px">취소</button>'
+        +'</div></div>';
+    }
+    const mobileBtn=pb.mobile
+      ?'<a href="tel:'+pb.mobile.replace(/[^0-9]/g,'')+'" style="display:flex;align-items:center;gap:5px;background:rgba(60,200,120,0.12);border:1px solid rgba(60,200,120,0.3);border-radius:20px;padding:6px 12px;text-decoration:none"><span style="font-size:12px">📱</span><span style="font-size:13px;font-weight:700;color:#60c880">'+pb.mobile+'</span></a>'
+      :'';
+    const telBtn=pb.tel
+      ?'<a href="tel:'+pb.tel.replace(/[^0-9]/g,'')+'" style="display:flex;align-items:center;gap:5px;background:rgba(108,99,255,0.12);border:1px solid rgba(108,99,255,0.3);border-radius:20px;padding:6px 12px;text-decoration:none"><span style="font-size:12px">☎️</span><span style="font-size:13px;font-weight:700;color:#9d97ff">'+pb.tel+'</span></a>'
+      :'';
+    const noPhone=(!pb.mobile&&!pb.tel)?'<span style="font-size:12px;color:#404060">전화번호 없음</span>':'';
+    return '<div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:12px 14px;margin-bottom:8px">'
+      +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">'
+      +'<span style="font-size:15px;font-weight:800;color:#fff">'+pb.name+'</span>'
+      +'<div style="display:flex;gap:5px">'
+      +'<button data-pb-edit="'+pb.docId+'" style="background:rgba(60,200,120,0.15);border:1px solid rgba(60,200,120,0.3);border-radius:7px;padding:4px 9px;color:#60c880;font-size:11px;font-weight:700">수정</button>'
+      +'<button data-pb-del="'+pb.docId+'" data-pb-name="'+pb.name+'" style="background:rgba(255,80,80,0.12);border:1px solid rgba(255,80,80,0.28);border-radius:7px;padding:4px 9px;color:#ff8080;font-size:11px;font-weight:700">삭제</button>'
+      +'</div></div>'
+      +'<div style="display:flex;gap:8px;flex-wrap:wrap">'+mobileBtn+telBtn+noPhone+'</div>'
+      +'</div>';
+  }).join("");
+
+  const emptyMsg='<div style="text-align:center;padding:32px;color:#404060"><div style="font-size:32px;margin-bottom:10px">📭</div><div style="font-size:13px">등록된 전화번호가 없습니다</div></div>';
+
+  return `<div style="position:fixed;inset:0;z-index:150;display:flex;flex-direction:column;justify-content:flex-start">
+    <div id="pb-bg" style="position:absolute;inset:0;background:rgba(0,0,0,0.75);backdrop-filter:blur(5px)"></div>
+    <div style="position:relative;z-index:1;background:#13132a;border-bottom:1px solid rgba(255,255,255,0.1);border-radius:0 0 22px 22px;max-height:85vh;display:flex;flex-direction:column;overflow:hidden;animation:slideDown 0.25s ease">
+      <div style="padding:13px 15px 10px;flex-shrink:0;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,0.07)">
+        <div>
+          <div style="font-size:16px;font-weight:900;color:#fff">📞 공용 전화번호부</div>
+          <div style="font-size:11px;color:#6060a0;margin-top:1px">모든 조가 함께 사용 · 누구나 추가/수정/삭제 가능</div>
+        </div>
+        <button id="pb-close" style="background:rgba(255,255,255,0.07);border:none;border-radius:50%;width:30px;height:30px;color:#9090c0;font-size:13px;display:flex;align-items:center;justify-content:center">✕</button>
+      </div>
+      <div style="padding:10px 14px;background:rgba(60,200,120,0.05);border-bottom:1px solid rgba(60,200,120,0.15);flex-shrink:0">
+        <div style="font-size:10px;color:#60c880;font-weight:700;margin-bottom:7px">+ 새 전화번호 추가</div>
+        <input id="pb-new-name" placeholder="이름 또는 업체명" value="${S.pbNewName}" style="width:100%;height:38px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.13);border-radius:8px;padding:0 10px;color:#e0e0f0;font-size:13px;outline:none;margin-bottom:6px"/>
+        <div style="display:flex;gap:6px;margin-bottom:7px">
+          <input id="pb-new-mobile" placeholder="📱 휴대폰" value="${S.pbNewMobile}" type="tel" style="flex:1;height:38px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.13);border-radius:8px;padding:0 9px;color:#e0e0f0;font-size:12px;outline:none"/>
+          <input id="pb-new-tel" placeholder="☎️ 일반전화" value="${S.pbNewTel}" type="tel" style="flex:1;height:38px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.13);border-radius:8px;padding:0 9px;color:#e0e0f0;font-size:12px;outline:none"/>
+        </div>
+        <button id="pb-add-btn" style="width:100%;height:38px;background:linear-gradient(135deg,#10b981,#34d399);border:none;border-radius:9px;color:#fff;font-size:13px;font-weight:800">추가하기</button>
+      </div>
+      <div style="overflow-y:auto;flex:1;padding:12px 14px 20px">
+        ${rows||emptyMsg}
       </div>
     </div>
   </div>`;
@@ -1014,16 +1120,20 @@ function renderSettings(){
           <div style="margin-bottom:18px">
             <div style="font-size:12px;color:#5050a0;font-weight:700;margin-bottom:10px">🎨 스킨 선택</div>
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
-              ${Object.entries(SKINS).map(([key,sk])=>`
-                <button data-skin="${key}" style="background:${sk.bg2};border:2px solid ${S.skin===key?sk.accent:"rgba(255,255,255,0.1)"};border-radius:14px;padding:12px 8px;display:flex;flex-direction:column;align-items:center;gap:6px;transition:all 0.15s">
-                  <div style="display:flex;gap:3px">
-                    <div style="width:10px;height:10px;border-radius:50%;background:${sk.accent}"></div>
-                    <div style="width:10px;height:10px;border-radius:50%;background:${sk.accent2}"></div>
-                    <div style="width:10px;height:10px;border-radius:50%;background:${sk.bg}"></div>
-                  </div>
-                  <div style="font-size:12px;font-weight:700;color:${S.skin===key?sk.accent:"#9090a0"}">${sk.name}</div>
-                  ${S.skin===key?`<div style="width:16px;height:16px;border-radius:50%;background:${sk.accent};display:flex;align-items:center;justify-content:center;font-size:9px;color:#fff">✓</div>`:`<div style="width:16px;height:16px"></div>`}
-                </button>`).join("")}
+              ${Object.entries(SKINS).map(([key,sk])=>{
+                const checkDiv=S.skin===key
+                  ?'<div style="width:16px;height:16px;border-radius:50%;background:'+sk.accent+';display:flex;align-items:center;justify-content:center;font-size:9px;color:#fff">✓</div>'
+                  :'<div style="width:16px;height:16px"></div>';
+                return '<button data-skin="'+key+'" style="background:'+sk.bg2+';border:2px solid '+(S.skin===key?sk.accent:'rgba(255,255,255,0.1)')+';border-radius:14px;padding:12px 8px;display:flex;flex-direction:column;align-items:center;gap:6px;transition:all 0.15s">'
+                  +'<div style="display:flex;gap:3px">'
+                  +'<div style="width:10px;height:10px;border-radius:50%;background:'+sk.accent+'"></div>'
+                  +'<div style="width:10px;height:10px;border-radius:50%;background:'+sk.accent2+'"></div>'
+                  +'<div style="width:10px;height:10px;border-radius:50%;background:'+sk.bg+'"></div>'
+                  +'</div>'
+                  +'<div style="font-size:12px;font-weight:700;color:'+(S.skin===key?sk.accent:'#9090a0')+'">'+sk.name+'</div>'
+                  +checkDiv
+                  +'</button>';
+              }).join("")}
             </div>
           </div>
           <!-- 폰트 선택 -->
@@ -1161,6 +1271,34 @@ function renderRestaurantPopup(){
 }
 
 // ── 바인딩 ────────────────────────────────────────────────────────
+// ── 전화번호부 바인딩 ─────────────────────────────────────────────
+function bindPhoneBook(){
+  document.getElementById("pb-bg")?.addEventListener("click",()=>{S.phoneBookOpen=false;S.pbEditId=null;render();});
+  document.getElementById("pb-close")?.addEventListener("click",()=>{S.phoneBookOpen=false;S.pbEditId=null;render();});
+  // 추가
+  document.getElementById("pb-new-name")?.addEventListener("input",e=>S.pbNewName=e.target.value);
+  document.getElementById("pb-new-mobile")?.addEventListener("input",e=>S.pbNewMobile=e.target.value);
+  document.getElementById("pb-new-tel")?.addEventListener("input",e=>S.pbNewTel=e.target.value);
+  document.getElementById("pb-add-btn")?.addEventListener("click",addPhoneBook);
+  // 수정
+  document.querySelectorAll("[data-pb-edit]").forEach(btn=>{
+    btn.onclick=()=>{
+      if(!confirm("⚠️ 공용 전화번호부를 수정합니다.\n모든 조에 반영됩니다. 계속하시겠습니까?")) return;
+      const pb=S.phoneBooks.find(p=>p.docId===btn.dataset.pbEdit);
+      if(pb){S.pbEditId=pb.docId;S.pbEditName=pb.name;S.pbEditMobile=pb.mobile||"";S.pbEditTel=pb.tel||"";render();}
+    };
+  });
+  document.getElementById("pb-edit-name")?.addEventListener("input",e=>S.pbEditName=e.target.value);
+  document.getElementById("pb-edit-mobile")?.addEventListener("input",e=>S.pbEditMobile=e.target.value);
+  document.getElementById("pb-edit-tel")?.addEventListener("input",e=>S.pbEditTel=e.target.value);
+  document.getElementById("pb-save-edit")?.addEventListener("click",savePhoneBookEdit);
+  document.getElementById("pb-cancel-edit")?.addEventListener("click",()=>{S.pbEditId=null;render();});
+  // 삭제
+  document.querySelectorAll("[data-pb-del]").forEach(btn=>{
+    btn.onclick=()=>deletePhoneBook(btn.dataset.pbDel,btn.dataset.pbName||"");
+  });
+}
+
 // ── 단체주문 바인딩 ───────────────────────────────────────────────
 function bindBulkOrder(){
   document.getElementById("bulk-close")?.addEventListener("click",()=>{
@@ -1187,6 +1325,7 @@ function bindBulkOrder(){
 }
 
 function bindMain(){
+  document.getElementById("phonebook-tab")?.addEventListener("click",()=>{S.phoneBookOpen=!S.phoneBookOpen;S.pbEditId=null;render();});
   document.getElementById("notice-btn")?.addEventListener("click",()=>{S.noticePopup=true;render();});
   document.getElementById("live-btn")?.addEventListener("click",()=>{S.liveBoard=true;render();});
   document.getElementById("settings-btn")?.addEventListener("click",()=>{S.settings=true;render();});
