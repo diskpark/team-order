@@ -24,7 +24,7 @@ input{font-family:inherit;}
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, setDoc, writeBatch, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-const VERSION = "v3.5";
+const VERSION = "v3.9";
 const firebaseConfig = {
   apiKey: "AIzaSyAQzhhO8NbhvUkNOjnjvVJgNNN4vx8KRXU",
   authDomain: "team-order-1cfb0.firebaseapp.com",
@@ -1666,7 +1666,7 @@ function renderSettings(){
         <div style="display:flex;gap:5px;flex-shrink:0">
           ${S.hiddenRestaurantIds.includes(r.docId)?
             `<button data-unhide-r="${r.docId}" style="background:rgba(255,157,60,0.15);border:1px solid rgba(255,157,60,0.3);border-radius:7px;padding:5px 9px;color:#ff9d60;font-size:11px;font-weight:700">숨김해제</button>`
-            :`<button data-hide-r="${r.docId}" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:7px;padding:5px 9px;color:#707080;font-size:11px;font-weight:700">숨기기</button>`}
+            :""}
           <button data-open-popup="${r.docId}" style="background:rgba(108,99,255,0.15);border:1px solid rgba(108,99,255,0.3);border-radius:7px;padding:5px 9px;color:#9d97ff;font-size:11px;font-weight:700">수정</button>
           <button data-rm-r="${r.docId}" data-rm-name="${r.name}" style="background:rgba(255,80,80,0.12);border:1px solid rgba(255,80,80,0.28);border-radius:7px;padding:5px 9px;color:#ff8080;font-size:11px;font-weight:700">삭제</button>
         </div>
@@ -2046,7 +2046,7 @@ function bindMain(){
       S.selectedRestaurantId=first?.docId||null;
     }
     S.restaurantMenuPopup=null;
-    showToast("👁 식당이 숨겨졌어요. 설정에서 해제 가능");
+    showToast("👁 숨겨졌어요\n⚙️ 설정 → 식당 탭에서 해제할 수 있어요");
     render();
   });
   document.getElementById("rmp-order")?.addEventListener("click",()=>{
