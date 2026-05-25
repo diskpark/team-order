@@ -24,7 +24,7 @@ input{font-family:inherit;}
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, setDoc, writeBatch, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-const VERSION = "v2.2";
+const VERSION = "v2.3";
 const firebaseConfig = {
   apiKey: "AIzaSyAQzhhO8NbhvUkNOjnjvVJgNNN4vx8KRXU",
   authDomain: "team-order-1cfb0.firebaseapp.com",
@@ -424,6 +424,7 @@ function render(){
   if(S.screen==="main"){
     app.innerHTML=renderMain();
     bindMain();
+    if(S.bulkOrder) bindBulkOrder();
     if(S.menuSheet) bindMenuSheet();
     if(S.liveBoard) bindLiveBoard();
     if(S.settings) bindSettings();
@@ -1160,6 +1161,31 @@ function renderRestaurantPopup(){
 }
 
 // ── 바인딩 ────────────────────────────────────────────────────────
+// ── 단체주문 바인딩 ───────────────────────────────────────────────
+function bindBulkOrder(){
+  document.getElementById("bulk-close")?.addEventListener("click",()=>{
+    S.bulkOrder=null; S.bulkQty={}; render();
+  });
+  document.getElementById("bulk-submit")?.addEventListener("click",()=>{
+    if(Object.values(S.bulkQty).some(q=>q>0)) submitBulkOrder();
+    else showToast("⚠️ 수량을 선택해주세요");
+  });
+  document.querySelectorAll("[data-bulk-plus]").forEach(btn=>{
+    btn.onclick=()=>{
+      const id=btn.dataset.bulkPlus;
+      S.bulkQty={...S.bulkQty,[id]:(S.bulkQty[id]||0)+1};
+      render();
+    };
+  });
+  document.querySelectorAll("[data-bulk-minus]").forEach(btn=>{
+    btn.onclick=()=>{
+      const id=btn.dataset.bulkMinus;
+      const cur=S.bulkQty[id]||0;
+      if(cur>0){ S.bulkQty={...S.bulkQty,[id]:cur-1}; render(); }
+    };
+  });
+}
+
 function bindMain(){
   document.getElementById("notice-btn")?.addEventListener("click",()=>{S.noticePopup=true;render();});
   document.getElementById("live-btn")?.addEventListener("click",()=>{S.liveBoard=true;render();});
