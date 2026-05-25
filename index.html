@@ -24,7 +24,7 @@ input{font-family:inherit;}
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, setDoc, writeBatch, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-const VERSION = "v4.0";
+const VERSION = "v4.1";
 const firebaseConfig = {
   apiKey: "AIzaSyAQzhhO8NbhvUkNOjnjvVJgNNN4vx8KRXU",
   authDomain: "team-order-1cfb0.firebaseapp.com",
@@ -1114,7 +1114,7 @@ function renderRestaurantMenuPopup(){
           <div><div style="font-size:16px;font-weight:900;color:#fff">${r.name}</div><div style="font-size:11px;color:#5050a0">${(r.menus||[]).length}개 메뉴</div></div>
         </div>
         <div style="display:flex;align-items:center;gap:7px">
-          <button id="rmp-hide" data-hide-rid="${r.docId}" style="background:rgba(255,157,60,0.12);border:1px solid rgba(255,157,60,0.3);border-radius:20px;padding:5px 12px;font-size:11px;font-weight:700;color:#ff9d60">숨기기</button>
+          ${S.chiefMode?`<button id="rmp-hide" data-hide-rid="${r.docId}" style="background:rgba(255,157,60,0.12);border:1px solid rgba(255,157,60,0.3);border-radius:20px;padding:5px 12px;font-size:11px;font-weight:700;color:#ff9d60">숨기기</button>`:""}
           <button id="rmp-close" style="background:rgba(255,255,255,0.07);border:none;border-radius:50%;width:32px;height:32px;color:#9090c0;font-size:15px;display:flex;align-items:center;justify-content:center">✕</button>
         </div>
       </div>
