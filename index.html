@@ -302,7 +302,10 @@ async function submitOrder(member,menu){
 }
 
 async function resetMyOrders(){
-  if(!confirm(`${S.myTeam.name} 전체 주문을 초기화할까요?`)) return;
+  const msg = S.chiefMode
+    ? `⚠️ 총무 모드 주문 초기화\n\n${S.myTeam.name} 전체 주문이 초기화됩니다.\n팀원 모두의 주문이 삭제되니 주의해주세요!\n\n계속하시겠습니까?`
+    : `${S.myTeam.name} 전체 주문을 초기화할까요?`;
+  if(!confirm(msg)) return;
   const b=writeBatch(db);
   S.allOrders.filter(o=>o.team===S.myTeam.name).forEach(o=>b.delete(doc(db,"orders",o.docId)));
   await b.commit(); showToast("🗑 초기화 완료");
