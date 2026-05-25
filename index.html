@@ -24,7 +24,7 @@ input{font-family:inherit;}
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, setDoc, writeBatch, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-const VERSION = "v3.2";
+const VERSION = "v3.3";
 const firebaseConfig = {
   apiKey: "AIzaSyAQzhhO8NbhvUkNOjnjvVJgNNN4vx8KRXU",
   authDomain: "team-order-1cfb0.firebaseapp.com",
@@ -120,7 +120,8 @@ let S = {
   chiefMode: false,
   joinRequests:[], // 합석 요청 목록 (실시간)
   showJoinPanel:false,
-  showSettlement:false, // 정산서 전체화면
+  showSettlement:false,
+  guestEditPopup:null, // 지게차 편집팝업 {teamName} // 정산서 전체화면
   notices:[], // 공지사항 목록
   noticePopup:false, // 공지 팝업 열림
   noticeAdminMode:false, // 관리자 모드
@@ -608,6 +609,7 @@ function render(){
   if(S.screen==="main"){
     app.innerHTML=renderMain();
     bindMain();
+    if(S.guestEditPopup) bindGuestEdit();
     if(S.showJoinPanel) bindJoinPanel();
     if(S.phoneBookOpen) bindPhoneBook();
     if(S.bulkOrder) bindBulkOrder();
@@ -717,29 +719,15 @@ function renderMain(){
     if(m.isGuestCard){
       const guestOrders=S.allOrders.filter(o=>o.guestTeam===m.teamName&&o.team===S.myTeam.name);
       const guestTotal=guestOrders.reduce((s,o)=>s+o.price,0);
-      const menuQty={};
-      guestOrders.forEach(o=>{
-        if(!menuQty[o.menu])menuQty[o.menu]={name:o.menu,price:o.price,count:0};
-        menuQty[o.menu].count++;
-      });
-      // 각 메뉴를 개별 카드로 - 배경만 다르게
-      return Object.values(menuQty).map(mq=>{
-        // 총무라면 수정 가능한 카드
-        const editBtns=S.chiefMode
-          ?'<div style="display:flex;gap:4px;margin-top:4px">'
-            +'<button data-guest-minus="'+m.teamName+'" data-guest-menu="'+mq.name+'" style="background:rgba(255,157,60,0.2);border:1px solid rgba(255,157,60,0.4);border-radius:6px;width:22px;height:22px;color:#ff9d60;font-size:14px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0">−</button>'
-            +'<button data-guest-plus="'+m.teamName+'" data-guest-menu="'+mq.name+'" data-guest-price="'+mq.price+'" style="background:rgba(255,157,60,0.2);border:1px solid rgba(255,157,60,0.4);border-radius:6px;width:22px;height:22px;color:#ff9d60;font-size:14px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0">+</button>'
-            +'</div>'
-          :'';
-        return '<div style="position:relative;width:100%">'
-          +'<div style="background:rgba(255,157,60,0.1);border:1.5px solid rgba(255,157,60,0.45);border-radius:12px;padding:10px 7px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-height:64px">'
-          +(mq.count>1?'<div style="position:absolute;top:5px;right:5px;background:#ff9d60;border-radius:50%;width:16px;height:16px;font-size:9px;color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center">'+mq.count+'</div>':'')
-          +'<div style="position:absolute;top:4px;left:5px;font-size:8px;color:#ff9d60;font-weight:700">🤝</div>'
-          +'<div style="font-size:${S.fontSizes.member}px;font-weight:700;color:#ffb860;text-align:center;line-height:1.3;word-break:keep-all;padding:0 2px">'+mq.name+'</div>'
-          +'<div style="font-size:12px;font-weight:900;color:#ff9d60">'+fmt(mq.price)+'</div>'
-          +editBtns
-          +'</div></div>';
-      }).join("");
+      // 일반 카드와 동일 모양, 배경/테두리만 주황, "지게차" 하나만
+      return `<div style="position:relative;width:100%">
+        <button data-open-guest-edit="${m.teamName}" style="background:rgba(255,157,60,0.12);border:2px solid rgba(255,157,60,0.5);border-radius:12px;padding:10px 6px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;transition:all 0.15s;width:100%;min-height:64px;position:relative">
+          <div style="position:absolute;top:4px;left:5px;font-size:8px;color:#ff9d60;font-weight:800">🤝</div>
+          ${guestOrders.length>0?`<div style="position:absolute;top:4px;right:5px;background:#ff9d60;border-radius:20px;padding:1px 5px;font-size:8px;color:#fff;font-weight:800">${guestOrders.length}</div>`:""}
+          <div style="font-size:${S.fontSizes.member}px;font-weight:800;color:#ffb860;text-align:center;line-height:1.3">${m.name}</div>
+          ${guestOrders.length>0?`<div style="font-size:10px;color:#ff9d60;font-weight:700">${fmt(guestTotal)}</div>`:`<div style="font-size:10px;color:#604030">주문없음</div>`}
+        </button>
+      </div>`;
     }
     // ── 일반 팀원 카드 ──
     const order=getMyOrder(m.name); const done=!!order;
@@ -789,17 +777,35 @@ function renderMain(){
             ${hasPhone?`<button data-call-main="${g.name}" style="background:rgba(108,99,255,0.15);border:1px solid rgba(108,99,255,0.3);border-radius:20px;padding:6px 12px;font-size:12px;color:#9d97ff;font-weight:700">📞 전화</button>`:""}
           </div>
         </div>
-        ${g.items.map(o=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid rgba(255,255,255,0.05)">
-          <div style="display:flex;align-items:center;gap:8px">
-            <div style="width:6px;height:6px;border-radius:50%;background:#6c63ff;flex-shrink:0"></div>
-            <span style="font-size:${S.fontSizes.summary}px;font-weight:700;color:#e0e0f0">${o.member}</span>
-            <span style="font-size:12px;color:#6060a0">${o.menu}</span>
-          </div>
-          <div style="display:flex;align-items:center;gap:8px">
-            <span style="font-size:12px;color:#9d97ff;font-weight:700">${fmt(o.price)}</span>
-            <button data-delete="${o.docId}" style="background:none;border:none;color:#ff6060;font-size:15px;line-height:1;padding:0">×</button>
-          </div>
-        </div>`).join("")}
+        ${(()=>{
+          const myItems=g.items.filter(o=>!o.guestTeam);
+          const guestGroups={};
+          g.items.filter(o=>o.guestTeam).forEach(o=>{
+            if(!guestGroups[o.guestTeam])guestGroups[o.guestTeam]={name:o.guestTeam,items:[],total:0};
+            guestGroups[o.guestTeam].items.push(o); guestGroups[o.guestTeam].total+=o.price;
+          });
+          const myRows=myItems.map(o=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid rgba(255,255,255,0.05)">
+            <div style="display:flex;align-items:center;gap:8px">
+              <div style="width:6px;height:6px;border-radius:50%;background:#6c63ff;flex-shrink:0"></div>
+              <span style="font-size:${S.fontSizes.summary}px;font-weight:700;color:#e0e0f0">${o.member}</span>
+              <span style="font-size:12px;color:#6060a0">${o.menu}</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="font-size:12px;color:#9d97ff;font-weight:700">${fmt(o.price)}</span>
+              <button data-delete="${o.docId}" style="background:none;border:none;color:#ff6060;font-size:15px;line-height:1;padding:0">×</button>
+            </div>
+          </div>`).join("");
+          const guestRows=Object.values(guestGroups).map(gg=>`
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,157,60,0.15);background:rgba(255,157,60,0.04);border-radius:6px;padding-left:6px">
+              <div style="display:flex;align-items:center;gap:8px">
+                <div style="width:6px;height:6px;border-radius:50%;background:#ff9d60;flex-shrink:0"></div>
+                <span style="font-size:${S.fontSizes.summary}px;font-weight:700;color:#ffb860">🤝 ${gg.name}</span>
+                <span style="font-size:11px;color:#806040">${gg.items.length}건</span>
+              </div>
+              <span style="font-size:13px;font-weight:700;color:#ff9d60">${fmt(gg.total)}</span>
+            </div>`).join("");
+          return myRows+guestRows;
+        })()}
         <div style="margin-top:8px;padding-top:7px;border-top:1px solid rgba(255,255,255,0.06)">
           ${Object.values(menuCount).map(m=>`<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:2px"><span style="color:#9090b0">${m.name} × ${m.count}</span><span style="color:#9d97ff;font-weight:700">${fmt(m.count*m.price)}</span></div>`).join("")}
           <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:800;margin-top:5px;padding-top:5px;border-top:1px solid rgba(255,255,255,0.06)">
@@ -887,6 +893,7 @@ function renderMain(){
       ${summaryHTML}
     </div>
   </div>
+  ${S.guestEditPopup?renderGuestEditPopup():""}
   ${S.showSettlement?renderSettlement(S.showSettlement):""}
   ${S.showJoinPanel?renderJoinPanel():""}
   ${renderJoinIncomingAlert()}
@@ -1121,6 +1128,51 @@ function renderPhoneBookPanel(){
       </div>
       <div style="overflow-y:auto;flex:1;padding:12px 14px 20px">
         ${rows||emptyMsg}
+      </div>
+    </div>
+  </div>`;
+}
+
+// ── 지게차 수정 팝업 ─────────────────────────────────────────────
+function renderGuestEditPopup(){
+  const teamName=S.guestEditPopup; if(!teamName) return "";
+  const guestOrders=S.allOrders.filter(o=>o.guestTeam===teamName&&o.team===S.myTeam.name);
+  const menuQty={};
+  guestOrders.forEach(o=>{
+    if(!menuQty[o.menu])menuQty[o.menu]={name:o.menu,price:o.price,count:0,docIds:[]};
+    menuQty[o.menu].count++;
+    menuQty[o.menu].docIds.push(o.docId);
+  });
+  const total=guestOrders.reduce((s,o)=>s+o.price,0);
+  const rows=Object.values(menuQty).map(mq=>`
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid rgba(255,255,255,0.06)">
+      <div>
+        <div style="font-size:15px;font-weight:700;color:#e0e0f0">${mq.name}</div>
+        <div style="font-size:12px;color:#ff9d60;margin-top:2px">${fmt(mq.price)} × ${mq.count} = ${fmt(mq.price*mq.count)}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <button data-guest-minus="${teamName}" data-guest-menu="${mq.name}" style="background:rgba(255,80,80,0.15);border:1px solid rgba(255,80,80,0.3);border-radius:8px;width:34px;height:34px;color:#ff8080;font-size:20px;font-weight:700;display:flex;align-items:center;justify-content:center">−</button>
+        <span style="font-size:18px;font-weight:900;color:#ffb860;min-width:20px;text-align:center">${mq.count}</span>
+        <button data-guest-plus="${teamName}" data-guest-menu="${mq.name}" data-guest-price="${mq.price}" style="background:rgba(60,200,120,0.15);border:1px solid rgba(60,200,120,0.3);border-radius:8px;width:34px;height:34px;color:#60c880;font-size:20px;font-weight:700;display:flex;align-items:center;justify-content:center">+</button>
+      </div>
+    </div>`).join("");
+
+  return `<div style="position:fixed;inset:0;z-index:200;display:flex;flex-direction:column;justify-content:flex-start">
+    <div id="ge-bg" style="position:absolute;inset:0;background:rgba(0,0,0,0.8);backdrop-filter:blur(6px)"></div>
+    <div style="position:relative;z-index:1;background:#13132a;border-bottom:1px solid rgba(255,255,255,0.1);border-radius:0 0 22px 22px;max-height:80vh;display:flex;flex-direction:column;overflow:hidden;animation:slideDown 0.25s ease">
+      <div style="padding:13px 15px 10px;flex-shrink:0;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,0.07)">
+        <div>
+          <div style="font-size:16px;font-weight:900;color:#fff">🤝 ${teamName} 주문 수정</div>
+          <div style="font-size:11px;color:#6060a0;margin-top:1px">${guestOrders.length}건 · 합계 ${fmt(total)}</div>
+        </div>
+        <button id="ge-close" style="background:rgba(255,255,255,0.07);border:none;border-radius:50%;width:30px;height:30px;color:#9090c0;font-size:13px;display:flex;align-items:center;justify-content:center">✕</button>
+      </div>
+      <div style="overflow-y:auto;flex:1;padding:0 16px 20px">
+        ${rows||`<div style="text-align:center;padding:24px;color:#404060">주문 내역이 없습니다</div>`}
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0 0;border-top:1px solid rgba(255,255,255,0.08);margin-top:8px">
+          <span style="font-size:14px;font-weight:700;color:#9090a0">합계</span>
+          <span style="font-size:18px;font-weight:900;color:#ffb860">${fmt(total)}</span>
+        </div>
       </div>
     </div>
   </div>`;
@@ -1677,6 +1729,39 @@ function renderRestaurantPopup(){
 }
 
 // ── 바인딩 ────────────────────────────────────────────────────────
+// ── 지게차 수정 바인딩 ─────────────────────────────────────────────
+function bindGuestEdit(){
+  document.getElementById("ge-bg")?.addEventListener("click",()=>{S.guestEditPopup=null;render();});
+  document.getElementById("ge-close")?.addEventListener("click",()=>{S.guestEditPopup=null;render();});
+  document.querySelectorAll("[data-guest-minus]").forEach(btn=>{
+    btn.onclick=async(e)=>{
+      e.stopPropagation();
+      const teamName=btn.dataset.guestMinus;
+      const menuName=btn.dataset.guestMenu;
+      const orders=S.allOrders.filter(o=>o.guestTeam===teamName&&o.team===S.myTeam.name&&o.menu===menuName);
+      if(orders.length===0) return;
+      await deleteDoc(doc(db,"orders",orders[0].docId));
+    };
+  });
+  document.querySelectorAll("[data-guest-plus]").forEach(btn=>{
+    btn.onclick=async(e)=>{
+      e.stopPropagation();
+      const teamName=btn.dataset.guestPlus;
+      const menuName=btn.dataset.guestMenu;
+      const price=parseInt(btn.dataset.guestPrice)||0;
+      const jr=S.joinRequests.find(r=>r.fromTeamName===teamName&&r.toTeamId===S.myTeam.docId&&r.status==="accepted");
+      const refOrder=S.allOrders.find(o=>o.guestTeam===teamName&&o.team===S.myTeam.name);
+      const at=new Date().toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit"});
+      await addDoc(collection(db,"orders"),{
+        team:S.myTeam.name, member:teamName,
+        restaurant:refOrder?.restaurant||"", restaurantEmoji:refOrder?.restaurantEmoji||"",
+        menu:menuName, price, at, date:todayKey(), timestamp:Date.now(),
+        guestTeam:teamName, joinRequestId:jr?.docId||""
+      });
+    };
+  });
+}
+
 // ── 합석 바인딩 ────────────────────────────────────────────────────
 function bindJoinPanel(){
   document.getElementById("join-bg")?.addEventListener("click",()=>{S.showJoinPanel=false;render();});
@@ -1816,32 +1901,9 @@ function bindMain(){
     };
   });
   document.querySelectorAll("[data-delete]").forEach(btn=>{btn.onclick=async()=>{await deleteDoc(doc(db,"orders",btn.dataset.delete));};});
-  // 지게차(합석) 메뉴 수정 (총무 전용)
-  document.querySelectorAll("[data-guest-minus]").forEach(btn=>{
-    btn.onclick=async(e)=>{
-      e.stopPropagation();
-      const teamName=btn.dataset.guestMinus;
-      const menuName=btn.dataset.guestMenu;
-      const orders=S.allOrders.filter(o=>o.guestTeam===teamName&&o.team===S.myTeam.name&&o.menu===menuName);
-      if(orders.length===0) return;
-      await deleteDoc(doc(db,"orders",orders[0].docId));
-    };
-  });
-  document.querySelectorAll("[data-guest-plus]").forEach(btn=>{
-    btn.onclick=async(e)=>{
-      e.stopPropagation();
-      const teamName=btn.dataset.guestPlus;
-      const menuName=btn.dataset.guestMenu;
-      const price=parseInt(btn.dataset.guestPrice)||0;
-      const jr=S.joinRequests.find(r=>r.fromTeamName===teamName&&r.toTeamId===S.myTeam.docId&&r.status==="accepted");
-      const at=new Date().toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit"});
-      await addDoc(collection(db,"orders"),{
-        team:S.myTeam.name, member:teamName, restaurant:S.allOrders.find(o=>o.guestTeam===teamName)?.restaurant||"",
-        restaurantEmoji:S.allOrders.find(o=>o.guestTeam===teamName)?.restaurantEmoji||"",
-        menu:menuName, price, at, date:todayKey(), timestamp:Date.now(),
-        guestTeam:teamName, joinRequestId:jr?.docId||""
-      });
-    };
+  // 지게차 카드 클릭 → 수정 팝업
+  document.querySelectorAll("[data-open-guest-edit]").forEach(btn=>{
+    btn.onclick=()=>{S.guestEditPopup=btn.dataset.openGuestEdit;render();};
   });
   document.querySelectorAll("[data-settlement]").forEach(btn=>{
     btn.onclick=()=>{S.showSettlement=btn.dataset.settlement;render();};
