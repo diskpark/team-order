@@ -24,7 +24,7 @@ input{font-family:inherit;}
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, setDoc, writeBatch, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-const VERSION = "v3.3";
+const VERSION = "v3.4";
 const firebaseConfig = {
   apiKey: "AIzaSyAQzhhO8NbhvUkNOjnjvVJgNNN4vx8KRXU",
   authDomain: "team-order-1cfb0.firebaseapp.com",
@@ -121,7 +121,9 @@ let S = {
   joinRequests:[], // 합석 요청 목록 (실시간)
   showJoinPanel:false,
   showSettlement:false,
-  guestEditPopup:null, // 지게차 편집팝업 {teamName} // 정산서 전체화면
+  guestEditPopup:null,
+  savedSettlements:[], // 저장된 정산서
+  showSavedSettlements:false,
   notices:[], // 공지사항 목록
   noticePopup:false, // 공지 팝업 열림
   noticeAdminMode:false, // 관리자 모드
@@ -208,6 +210,14 @@ function initFirebase(){
     if(!S.myTeam) return;
     const mine=snap.docs.find(d=>d.id===S.myTeam.docId);
     S.recentOrders=mine?(mine.data().orders||[]):[];
+    if(S.screen==="main") render();
+  });
+  // 정산서 저장 실시간 (조별)
+  onSnapshot(collection(db,"settlements"), snap=>{
+    if(!S.myTeam) return;
+    const mine=snap.docs.filter(d=>d.data().teamId===S.myTeam.docId);
+    S.savedSettlements=mine.map(d=>({...d.data(),docId:d.id}))
+      .sort((a,b)=>(b.savedAt||0)-(a.savedAt||0));
     if(S.screen==="main") render();
   });
   onSnapshot(collection(db,"orders"), snap=>{
@@ -512,6 +522,50 @@ function getJoinedMembers(){
   return [...myMembers,...guestCards];
 }
 
+// ── 정산서 저장 ──────────────────────────────────────────────────
+async function saveSettlement(restaurantName){
+  const rOrders=S.allOrders.filter(o=>o.team===S.myTeam.name&&o.restaurant===restaurantName);
+  if(rOrders.length===0){showToast("⚠️ 주문 내역이 없습니다");return;}
+  const r=S.restaurants.find(r=>r.name===restaurantName);
+
+  // 팀별 그룹
+  const teamGroups={};
+  rOrders.forEach(o=>{
+    const tname=o.guestTeam||o.team;
+    if(!teamGroups[tname])teamGroups[tname]={name:tname,orders:[],total:0,isGuest:!!o.guestTeam};
+    teamGroups[tname].orders.push({member:o.member,menu:o.menu,price:o.price});
+    teamGroups[tname].total+=o.price;
+  });
+
+  // 메뉴별 집계
+  const menuCount={};
+  rOrders.forEach(o=>{
+    if(!menuCount[o.menu])menuCount[o.menu]={name:o.menu,price:o.price,count:0};
+    menuCount[o.menu].count++;
+  });
+
+  const now=new Date();
+  const id=`st_${uid()}`;
+  await setDoc(doc(db,"settlements",id),{
+    id, teamId:S.myTeam.docId, teamName:S.myTeam.name,
+    restaurantName, restaurantEmoji:r?.emoji||"🍽",
+    teamGroups:Object.values(teamGroups),
+    menuCount:Object.values(menuCount),
+    grandTotal:rOrders.reduce((s,o)=>s+o.price,0),
+    totalCount:rOrders.length,
+    savedAt:Date.now(),
+    savedDate:now.toLocaleDateString("ko-KR",{month:"numeric",day:"numeric"}),
+    savedTime:now.toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit"})
+  });
+  showToast("✅ 정산서 저장됨!");
+}
+
+async function deleteSettlement(docId){
+  if(!confirm("이 정산서를 삭제할까요?")) return;
+  await deleteDoc(doc(db,"settlements",docId));
+  showToast("🗑 정산서 삭제됨");
+}
+
 // ── 공지사항 ─────────────────────────────────────────────────────
 const ADMIN_PW = "31014";
 
@@ -610,6 +664,8 @@ function render(){
     app.innerHTML=renderMain();
     bindMain();
     if(S.guestEditPopup) bindGuestEdit();
+    if(S.showSavedSettlements) bindSettlementHistory();
+    if(S.showSettlement) bindSettlementScreen();
     if(S.showJoinPanel) bindJoinPanel();
     if(S.phoneBookOpen) bindPhoneBook();
     if(S.bulkOrder) bindBulkOrder();
@@ -894,6 +950,7 @@ function renderMain(){
     </div>
   </div>
   ${S.guestEditPopup?renderGuestEditPopup():""}
+  ${S.showSavedSettlements?renderSettlementHistory():""}
   ${S.showSettlement?renderSettlement(S.showSettlement):""}
   ${S.showJoinPanel?renderJoinPanel():""}
   ${renderJoinIncomingAlert()}
@@ -1178,6 +1235,50 @@ function renderGuestEditPopup(){
   </div>`;
 }
 
+// ── 정산서 보관함 팝업 ───────────────────────────────────────────
+function renderSettlementHistory(){
+  const rows=S.savedSettlements.map(s=>`
+    <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:14px;padding:14px;margin-bottom:10px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <div>
+          <div style="font-size:15px;font-weight:800;color:#fff">${s.restaurantEmoji} ${s.restaurantName}</div>
+          <div style="font-size:11px;color:#5050a0;margin-top:2px">${s.savedDate} ${s.savedTime} · ${s.teamName} · ${s.totalCount}명</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:16px;font-weight:900;color:#9d97ff">${fmt(s.grandTotal)}</span>
+          <button data-del-settlement="${s.docId}" style="background:none;border:none;color:#ff4040;font-size:16px;padding:0">×</button>
+        </div>
+      </div>
+      <!-- 팀별 소계 -->
+      ${s.teamGroups.map(tg=>`<div style="display:flex;justify-content:space-between;padding:5px 0;border-top:1px solid rgba(255,255,255,0.05)">
+        <span style="font-size:12px;color:${tg.isGuest?"#ff9d60":"#9090a0"}">${tg.isGuest?"🤝 ":""}${tg.name} (${tg.orders.length}명)</span>
+        <span style="font-size:12px;font-weight:700;color:${tg.isGuest?"#ff9d60":"#9d97ff"}">${fmt(tg.total)}</span>
+      </div>`).join("")}
+      <!-- 메뉴 집계 -->
+      <div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.06)">
+        ${s.menuCount.map(m=>`<div style="display:flex;justify-content:space-between;font-size:11px;color:#6060a0;margin-bottom:2px">
+          <span>${m.name} × ${m.count}</span><span style="color:#7070a0">${fmt(m.price*m.count)}</span>
+        </div>`).join("")}
+      </div>
+    </div>`).join("");
+
+  return `<div style="position:fixed;inset:0;z-index:400;display:flex;flex-direction:column;justify-content:flex-start">
+    <div id="sh-bg" style="position:absolute;inset:0;background:rgba(0,0,0,0.85);backdrop-filter:blur(8px)"></div>
+    <div style="position:relative;z-index:1;background:#0f0f24;border-bottom:1px solid rgba(255,255,255,0.1);border-radius:0 0 22px 22px;max-height:90vh;display:flex;flex-direction:column;overflow:hidden;animation:slideDown 0.25s ease">
+      <div style="padding:14px 16px 12px;flex-shrink:0;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,0.07)">
+        <div>
+          <div style="font-size:16px;font-weight:900;color:#fff">📋 정산서 보관함</div>
+          <div style="font-size:11px;color:#5050a0;margin-top:1px">${S.myTeam?.name} · ${S.savedSettlements.length}개 저장됨</div>
+        </div>
+        <button id="sh-close" style="background:rgba(255,255,255,0.07);border:none;border-radius:50%;width:30px;height:30px;color:#9090c0;font-size:13px;display:flex;align-items:center;justify-content:center">✕</button>
+      </div>
+      <div style="overflow-y:auto;flex:1;padding:14px 15px 20px">
+        ${rows||`<div style="text-align:center;padding:40px;color:#404060"><div style="font-size:36px;margin-bottom:12px">📭</div><div style="font-size:13px">저장된 정산서가 없습니다</div><div style="font-size:11px;color:#303050;margin-top:6px">정산서 화면에서 💾 저장 버튼을 누르세요</div></div>`}
+      </div>
+    </div>
+  </div>`;
+}
+
 // ── 정산서 전체화면 ──────────────────────────────────────────────
 function renderSettlement(restaurantName){
   const rOrders=S.allOrders.filter(o=>
@@ -1229,12 +1330,18 @@ function renderSettlement(restaurantName){
 
   return `<div style="position:fixed;inset:0;z-index:350;background:#0d0d1a;display:flex;flex-direction:column;animation:fadeUp 0.25s ease">
     <!-- 헤더 -->
-    <div style="padding:16px 16px 12px;background:rgba(255,255,255,0.03);border-bottom:1px solid rgba(255,255,255,0.08);flex-shrink:0;display:flex;align-items:center;justify-content:space-between">
-      <div>
-        <div style="font-size:10px;color:#5050a0;letter-spacing:2px;font-weight:700">SETTLEMENT</div>
-        <div style="font-size:18px;font-weight:900;color:#fff">${r?.emoji||"🍽"} ${restaurantName} 정산서</div>
+    <div style="padding:14px 16px 12px;background:rgba(255,255,255,0.03);border-bottom:1px solid rgba(255,255,255,0.08);flex-shrink:0">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <div>
+          <div style="font-size:10px;color:#5050a0;letter-spacing:2px;font-weight:700">SETTLEMENT</div>
+          <div style="font-size:16px;font-weight:900;color:#fff">${r?.emoji||"🍽"} ${restaurantName} 정산서</div>
+        </div>
+        <button id="settle-close" style="background:rgba(255,255,255,0.07);border:none;border-radius:50%;width:34px;height:34px;color:#9090c0;font-size:16px;display:flex;align-items:center;justify-content:center">✕</button>
       </div>
-      <button id="settle-close" style="background:rgba(255,255,255,0.07);border:none;border-radius:50%;width:34px;height:34px;color:#9090c0;font-size:16px;display:flex;align-items:center;justify-content:center">✕</button>
+      <div style="display:flex;gap:8px">
+        <button id="settle-save" data-settle-rest="${restaurantName}" style="flex:1;height:40px;background:linear-gradient(135deg,#6c63ff,#9d97ff);border:none;border-radius:10px;color:#fff;font-size:13px;font-weight:800" onclick="saveSettlement('${restaurantName}')">💾 정산서 저장</button>
+        <button id="settle-history" style="height:40px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.15);border-radius:10px;padding:0 14px;color:#9090c0;font-size:12px;font-weight:700;white-space:nowrap;position:relative">📋 보관함${S.savedSettlements.length>0?` <span style="background:#6c63ff;border-radius:20px;padding:1px 6px;font-size:10px;color:#fff">${S.savedSettlements.length}</span>`:""}</button>
+      </div>
     </div>
     <div style="flex:1;overflow-y:auto;padding:16px 15px 30px">
       <!-- 팀별 정산 -->
@@ -1729,6 +1836,24 @@ function renderRestaurantPopup(){
 }
 
 // ── 바인딩 ────────────────────────────────────────────────────────
+// ── 정산서 화면 바인딩 ────────────────────────────────────────────
+function bindSettlementScreen(){
+  // settle-close handled in bindSettlementScreen
+  document.getElementById("settle-save")?.addEventListener("click",async()=>{
+    await saveSettlement(S.showSettlement);
+  });
+  document.getElementById("settle-history")?.addEventListener("click",()=>{S.showSavedSettlements=true;render();});
+}
+
+// ── 정산서 보관함 바인딩 ───────────────────────────────────────────
+function bindSettlementHistory(){
+  document.getElementById("sh-bg")?.addEventListener("click",()=>{S.showSavedSettlements=false;render();});
+  document.getElementById("sh-close")?.addEventListener("click",()=>{S.showSavedSettlements=false;render();});
+  document.querySelectorAll("[data-del-settlement]").forEach(btn=>{
+    btn.onclick=()=>deleteSettlement(btn.dataset.delSettlement);
+  });
+}
+
 // ── 지게차 수정 바인딩 ─────────────────────────────────────────────
 function bindGuestEdit(){
   document.getElementById("ge-bg")?.addEventListener("click",()=>{S.guestEditPopup=null;render();});
@@ -1908,7 +2033,7 @@ function bindMain(){
   document.querySelectorAll("[data-settlement]").forEach(btn=>{
     btn.onclick=()=>{S.showSettlement=btn.dataset.settlement;render();};
   });
-  document.getElementById("settle-close")?.addEventListener("click",()=>{S.showSettlement=false;render();});
+  // settle-close handled in bindSettlementScreen
   document.querySelectorAll("[data-sms-main]").forEach(btn=>{btn.onclick=()=>sendSMS(btn.dataset.smsMain);});
   document.querySelectorAll("[data-call-main]").forEach(btn=>{btn.onclick=()=>callRestaurant(btn.dataset.callMain);});
 
