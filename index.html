@@ -24,7 +24,7 @@ input{font-family:inherit;}
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, setDoc, writeBatch, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-const VERSION = "v4.3";
+const VERSION = "v4.4";
 const firebaseConfig = {
   apiKey: "AIzaSyAQzhhO8NbhvUkNOjnjvVJgNNN4vx8KRXU",
   authDomain: "team-order-1cfb0.firebaseapp.com",
@@ -99,6 +99,7 @@ let S = {
   multiSelect:false,   // 복수선택 모드
   selectedMenus:[],    // 복수선택된 메뉴 목록 [{id,name,price}]
   seenRestaurantIds:JSON.parse(localStorage.getItem("seenRestaurantIds")||"[]"),
+  chiefSelectedRestaurant:null, // 총무가 선택한 식당 (조별 공유)
   hiddenRestaurantIds:JSON.parse(localStorage.getItem("hiddenRestaurantIds")||"[]"),
   hiddenRestaurantIds:JSON.parse(localStorage.getItem("hiddenRestaurantIds")||"[]"), // 숨긴 식당 (조별)
   restaurantMenuPopup:null, // 식당 메뉴 팝업 {restaurant}
@@ -291,6 +292,20 @@ async function saveRestaurantOrder(order){
   S.restaurantOrder=order;
   await setDoc(doc(db,"teamRestaurantOrder",S.myTeam.docId),{order,teamId:S.myTeam.docId});
 }
+async function setChiefRestaurant(docId){
+  if(!S.myTeam) return;
+  const cur=S.restaurantOrder.length>0?[...S.restaurantOrder]
+    :getOrderedRestaurants().map(r=>r.docId);
+  const newOrder=[docId,...cur.filter(id=>id!==docId)];
+  await setDoc(doc(db,"teamRestaurantOrder",S.myTeam.docId),{
+    order:newOrder,
+    chiefSelectedRestaurant:docId
+  });
+  S.selectedRestaurantId=docId;
+  showToast("✅ 오늘의 식당으로 설정!");
+  render();
+}
+
 async function moveRestaurant(docId,dir){
   const list=getOrderedRestaurants().map(r=>r.docId);
   const idx=list.indexOf(docId); if(idx===-1) return;
@@ -748,9 +763,10 @@ function renderMain(){
       <button data-rtab="${r.docId}" style="background:${active?"rgba(108,99,255,0.25)":"rgba(255,255,255,0.04)"};border:2px solid ${active?"rgba(108,99,255,0.8)":"rgba(255,255,255,0.08)"};border-radius:14px;padding:9px 10px 5px;display:flex;flex-direction:column;align-items:center;gap:2px;color:${active?"#c4c0ff":"#606080"};transition:all 0.18s;width:100%">
         <span style="font-size:20px">${r.emoji}</span>
         <span style="font-size:${S.fontSizes.restaurant}px;font-weight:700;white-space:nowrap">${r.name}</span>
-        ${active?`<div style="display:flex;gap:4px;margin-top:1px;align-items:center">
+        ${active?`<div style="display:flex;gap:4px;margin-top:1px;align-items:center;flex-wrap:wrap;justify-content:center">
           <div data-show-menu="${r.docId}" style="background:rgba(108,99,255,0.35);border-radius:8px;padding:2px 8px;font-size:9px;color:#c4c0ff;font-weight:700;cursor:pointer">메뉴보기</div>
-          ${S.chiefMode?`<div data-hide-restaurant="${r.docId}" style="background:rgba(255,80,80,0.2);border-radius:8px;padding:2px 7px;font-size:9px;color:#ff9090;font-weight:700;cursor:pointer">숨기기</div>`:""}
+          ${S.chiefMode?'<div data-chief-pick="'+r.docId+'" style="background:rgba(255,200,60,0.3);border-radius:8px;padding:2px 7px;font-size:9px;color:#ffd060;font-weight:700;cursor:pointer">⭐앞으로</div>':""}
+          ${S.chiefMode?'<div data-hide-restaurant="'+r.docId+'" style="background:rgba(255,80,80,0.2);border-radius:8px;padding:2px 7px;font-size:9px;color:#ff9090;font-weight:700;cursor:pointer">숨기기</div>':""}
         </div>`:`<div style="height:14px"></div>`}
       </button>
       ${cnt>0?`<span style="position:absolute;top:-5px;right:-5px;background:#ff6b6b;border-radius:20px;font-size:9px;padding:1px 5px;color:#fff;font-weight:800;pointer-events:none">${cnt}</span>`:""}
@@ -2013,6 +2029,13 @@ function bindMain(){
       e.stopPropagation();
       const r=S.restaurants.find(r=>r.docId===el.dataset.showMenu);
       if(r){S.restaurantMenuPopup=r.docId;render();}
+    };
+  });
+  // 앞으로 버튼 - 총무가 오늘 식당 지정
+  document.querySelectorAll("[data-chief-pick]").forEach(el=>{
+    el.onclick=(e)=>{
+      e.stopPropagation();
+      setChiefRestaurant(el.dataset.chiefPick);
     };
   });
   // 숨기기 버튼
