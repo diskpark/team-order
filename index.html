@@ -1838,7 +1838,7 @@ function renderRestaurantPopup(){
 // ── 바인딩 ────────────────────────────────────────────────────────
 // ── 정산서 화면 바인딩 ────────────────────────────────────────────
 function bindSettlementScreen(){
-  // settle-close handled in bindSettlementScreen
+  document.getElementById("settle-close")?.addEventListener("click",()=>{S.showSettlement=false;render();});
   document.getElementById("settle-save")?.addEventListener("click",async()=>{
     await saveSettlement(S.showSettlement);
   });
