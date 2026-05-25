@@ -95,7 +95,7 @@ let S = {
   recentTab:false, // 식당탭 아래 최근주문 탭 펼침
   recentDetailIdx:null,
   quickAddMode:false, quickAddName:"",
-  menuSheetTab:"recent", // recent | popular | alpha
+  menuSheetTab:"popular", // popular | alpha | recent
   multiSelect:false,   // 복수선택 모드
   selectedMenus:[],    // 복수선택된 메뉴 목록 [{id,name,price}]
   seenRestaurantIds:JSON.parse(localStorage.getItem("seenRestaurantIds")||"[]"), // 이미 본 식당 ID
@@ -1036,9 +1036,9 @@ function renderMenuSheet(){
       </div>
       <!-- 탭 -->
       <div style="display:flex;border-bottom:1px solid rgba(255,255,255,0.07);flex-shrink:0">
-        <button data-menu-tab="recent" style="flex:1;padding:9px 4px;background:none;border:none;border-bottom:2px solid ${S.menuSheetTab==="recent"?"#ff9d60":"transparent"};font-size:11px;font-weight:700;color:${S.menuSheetTab==="recent"?"#ff9d60":"#505070"}">🕐 최근</button>
         <button data-menu-tab="popular" style="flex:1;padding:9px 4px;background:none;border:none;border-bottom:2px solid ${S.menuSheetTab==="popular"?"#6c63ff":"transparent"};font-size:11px;font-weight:700;color:${S.menuSheetTab==="popular"?"#9d97ff":"#505070"}">🔥 인기순</button>
         <button data-menu-tab="alpha" style="flex:1;padding:9px 4px;background:none;border:none;border-bottom:2px solid ${S.menuSheetTab==="alpha"?"#6c63ff":"transparent"};font-size:11px;font-weight:700;color:${S.menuSheetTab==="alpha"?"#9d97ff":"#505070"}">가나다순</button>
+        <button data-menu-tab="recent" style="flex:1;padding:9px 4px;background:none;border:none;border-bottom:2px solid ${S.menuSheetTab==="recent"?"#ff9d60":"transparent"};font-size:11px;font-weight:700;color:${S.menuSheetTab==="recent"?"#ff9d60":"#505070"}">🕐 최근</button>
       </div>
       <!-- 복수선택 선택 목록 -->
       ${S.multiSelect&&S.selectedMenus.length>0?`<div style="padding:8px 13px;background:rgba(108,99,255,0.08);border-bottom:1px solid rgba(108,99,255,0.2);flex-shrink:0;overflow-x:auto;display:flex;gap:6px;align-items:center">
@@ -2288,6 +2288,24 @@ function bindRestaurantPopup(){
 }
 
 initFirebase();
+
+// ── 10분 자동 만료 ────────────────────────────────────────────────
+function cleanExpiredOrders(){
+  const now=Date.now();
+  const expired=S.allOrders.filter(o=>
+    o.team===S.myTeam?.name &&
+    o.timestamp &&
+    (now - o.timestamp) > 10*60*1000 // 10분
+  );
+  if(expired.length===0) return;
+  const b=writeBatch(db);
+  expired.forEach(o=>b.delete(doc(db,"orders",o.docId)));
+  b.commit().catch(()=>{});
+  if(expired.length>0) showToast(`🕐 ${expired.length}건 만료 주문 삭제됨`);
+}
+
+// 1분마다 체크
+setInterval(cleanExpiredOrders, 60*1000);
 </script>
 </body>
 </html>
