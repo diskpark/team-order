@@ -24,7 +24,7 @@ input{font-family:inherit;}
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, setDoc, writeBatch, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-const VERSION = "v4.6";
+const VERSION = "v4.7";
 const firebaseConfig = {
   apiKey: "AIzaSyAQzhhO8NbhvUkNOjnjvVJgNNN4vx8KRXU",
   authDomain: "team-order-1cfb0.firebaseapp.com",
@@ -908,23 +908,21 @@ function renderMain(){
         <span style="font-size:17px">🍽</span>
         <div><div style="font-size:9px;color:#5050a0;letter-spacing:2px">TEAM MEAL</div><div style="font-size:15px;font-weight:900;color:#fff;line-height:1.2;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${S.myTeam.name} 식사 주문</div></div>
       </div>
-      <div style="display:flex;align-items:center;gap:6px">
-        <button id="notice-btn" style="background:${S.notices.length>0?"linear-gradient(135deg,rgba(255,107,107,0.25),rgba(108,99,255,0.25))":"rgba(255,255,255,0.07)"};border:1.5px solid ${S.notices.length>0?"rgba(255,107,107,0.5)":"rgba(255,255,255,0.12)"};border-radius:20px;padding:5px 11px;font-size:11px;color:${S.notices.length>0?"#ff9d9d":"#808090"};font-weight:700;display:flex;align-items:center;gap:5px;position:relative">
-          📢 공지
-          ${S.notices.length>0?`<span style="background:#ff6b6b;border-radius:20px;font-size:9px;padding:1px 5px;color:#fff;font-weight:800">${S.notices.length}</span>`:""}
+      <div style="display:flex;align-items:center;gap:4px;flex-shrink:0">
+        <button id="notice-btn" style="background:${S.notices.length>0?"rgba(255,107,107,0.2)":"rgba(255,255,255,0.07)"};border:1px solid ${S.notices.length>0?"rgba(255,107,107,0.4)":"rgba(255,255,255,0.12)"};border-radius:20px;padding:4px 8px;font-size:10px;color:${S.notices.length>0?"#ff9d9d":"#808090"};font-weight:700;display:flex;align-items:center;gap:3px;position:relative;flex-shrink:0">
+          📢${S.notices.length>0?`<span style="background:#ff6b6b;border-radius:50%;width:14px;height:14px;font-size:9px;color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center">${S.notices.length}</span>`:"공지"}
         </button>
-        <button id="live-btn" style="background:rgba(255,107,107,0.15);border:1px solid rgba(255,107,107,0.3);border-radius:20px;padding:5px 10px;font-size:11px;color:#ff9d9d;font-weight:700;display:flex;align-items:center;gap:4px">
+        <button id="live-btn" style="background:rgba(255,107,107,0.15);border:1px solid rgba(255,107,107,0.3);border-radius:20px;padding:4px 8px;font-size:10px;color:#ff9d9d;font-weight:700;display:flex;align-items:center;gap:3px;flex-shrink:0">
           <span style="width:5px;height:5px;border-radius:50%;background:#ff6b6b;display:inline-block;animation:pulse 1.5s infinite"></span>LIVE
         </button>
-        <span style="font-size:10px;color:#404060;font-weight:600">${VERSION}</span>
-        <div style="background:rgba(108,99,255,0.15);border:1px solid rgba(108,99,255,0.3);border-radius:20px;padding:3px 9px;font-size:11px;color:#9d97ff;font-weight:700">${myOrders.length}/${myMembers.length}${members.length>myMembers.length?`+${members.length-myMembers.length}`:""}</div>
-        ${S.chiefMode?`<button id="join-btn" style="background:${(outgoingReq||incomingReqs.length>0)?"rgba(108,99,255,0.25)":"rgba(255,255,255,0.07)"};border:1px solid ${(outgoingReq||incomingReqs.length>0)?"rgba(108,99,255,0.5)":"rgba(255,255,255,0.12)"};border-radius:10px;padding:0 10px;height:33px;font-size:11px;font-weight:800;color:${(outgoingReq||incomingReqs.length>0)?"#c4c0ff":"#808090"};white-space:nowrap;position:relative">
-          🤝${incomingReqs.length>0?`<span style="position:absolute;top:-4px;right:-4px;background:#ff6b6b;border-radius:50%;width:14px;height:14px;font-size:9px;color:#fff;display:flex;align-items:center;justify-content:center">${incomingReqs.length}</span>`:""}
+        <div style="background:rgba(108,99,255,0.15);border:1px solid rgba(108,99,255,0.3);border-radius:20px;padding:3px 7px;font-size:10px;color:#9d97ff;font-weight:700;flex-shrink:0">${myOrders.length}/${myMembers.length}${members.length>myMembers.length?`+${members.length-myMembers.length}`:""}</div>
+        ${S.chiefMode?`<button id="join-btn" style="background:${(outgoingReq||incomingReqs.length>0)?"rgba(108,99,255,0.25)":"rgba(255,255,255,0.07)"};border:1px solid ${(outgoingReq||incomingReqs.length>0)?"rgba(108,99,255,0.5)":"rgba(255,255,255,0.12)"};border-radius:8px;width:28px;height:28px;font-size:13px;color:${(outgoingReq||incomingReqs.length>0)?"#c4c0ff":"#808090"};position:relative;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+          🤝${incomingReqs.length>0?`<span style="position:absolute;top:-4px;right:-4px;background:#ff6b6b;border-radius:50%;width:13px;height:13px;font-size:8px;color:#fff;display:flex;align-items:center;justify-content:center">${incomingReqs.length}</span>`:""}
         </button>`:``}
-        <button id="chief-btn" style="background:${S.chiefMode?"linear-gradient(135deg,#ff9d60,#ffb860)":"rgba(255,255,255,0.07)"};border:1px solid ${S.chiefMode?"rgba(255,157,60,0.6)":"rgba(255,255,255,0.12)"};border-radius:10px;padding:0 10px;height:33px;font-size:11px;font-weight:800;color:${S.chiefMode?"#fff":"#808090"};white-space:nowrap">
-          ${S.chiefMode?"👑 총무":"총무"}
+        <button id="chief-btn" style="background:${S.chiefMode?"linear-gradient(135deg,#ff9d60,#ffb860)":"rgba(255,255,255,0.07)"};border:1px solid ${S.chiefMode?"rgba(255,157,60,0.6)":"rgba(255,255,255,0.12)"};border-radius:8px;padding:0 8px;height:28px;font-size:10px;font-weight:800;color:${S.chiefMode?"#fff":"#808090"};white-space:nowrap;flex-shrink:0">
+          ${S.chiefMode?"👑총무":"총무"}
         </button>
-        <button id="settings-btn" style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:10px;width:33px;height:33px;display:flex;align-items:center;justify-content:center;font-size:16px">⚙️</button>
+        <button id="settings-btn" style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0">⚙️</button>
       </div>
     </div>
     <!-- 식당 탭 (최근주문 먼저, NEW 마크) -->
