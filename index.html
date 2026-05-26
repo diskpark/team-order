@@ -1,12 +1,12 @@
 <!DOCTYPE html>
-<html lang="ko">
+<html lang="ko" style="overflow-x:hidden;width:100%;">
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0"/>
 <title>식사 주문</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
-body{background:#0d0d1a;color:#e8e8f0;font-family:'Noto Sans KR','Apple SD Gothic Neo',sans-serif;min-height:100vh;}
+body{background:#0d0d1a;color:#e8e8f0;font-family:'Noto Sans KR','Apple SD Gothic Neo',sans-serif;min-height:100vh;overflow-x:hidden;width:100%;max-width:100vw;}
 button{font-family:inherit;cursor:pointer;}
 input{font-family:inherit;}
 ::-webkit-scrollbar{display:none;}
@@ -19,12 +19,12 @@ input{font-family:inherit;}
 </style>
 </head>
 <body>
-<div id="app"></div>
+<div id="app" style="width:100%;max-width:100vw;overflow-x:hidden;"></div>
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, setDoc, writeBatch, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-const VERSION = "v4.5";
+const VERSION = "v4.6";
 const firebaseConfig = {
   apiKey: "AIzaSyAQzhhO8NbhvUkNOjnjvVJgNNN4vx8KRXU",
   authDomain: "team-order-1cfb0.firebaseapp.com",
@@ -703,7 +703,7 @@ function renderTeamSelect(){
     <div style="font-size:48px;margin-bottom:12px">🍽</div>
     <h1 style="font-size:24px;font-weight:900;color:#fff;margin:0 0 6px">식사 주문</h1>
     <p style="color:#6060a0;font-size:13px;margin:0 0 28px">몇 조인지 선택해주세요</p>
-    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:9px;width:100%;max-width:360px">${btns}</div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:9px;width:100%;max-width:100%">${btns}</div>
   </div>`;
 }
 function bindTeamSelect(){
@@ -906,7 +906,7 @@ function renderMain(){
     <div style="background:${T.header};border-bottom:1px solid ${T.border};padding:11px 13px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0">
       <div style="display:flex;align-items:center;gap:8px">
         <span style="font-size:17px">🍽</span>
-        <div><div style="font-size:9px;color:#5050a0;letter-spacing:2px">TEAM MEAL</div><div style="font-size:15px;font-weight:900;color:#fff;line-height:1.2">${S.myTeam.name} 식사 주문</div></div>
+        <div><div style="font-size:9px;color:#5050a0;letter-spacing:2px">TEAM MEAL</div><div style="font-size:15px;font-weight:900;color:#fff;line-height:1.2;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${S.myTeam.name} 식사 주문</div></div>
       </div>
       <div style="display:flex;align-items:center;gap:6px">
         <button id="notice-btn" style="background:${S.notices.length>0?"linear-gradient(135deg,rgba(255,107,107,0.25),rgba(108,99,255,0.25))":"rgba(255,255,255,0.07)"};border:1.5px solid ${S.notices.length>0?"rgba(255,107,107,0.5)":"rgba(255,255,255,0.12)"};border-radius:20px;padding:5px 11px;font-size:11px;color:${S.notices.length>0?"#ff9d9d":"#808090"};font-weight:700;display:flex;align-items:center;gap:5px;position:relative">
