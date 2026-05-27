@@ -24,7 +24,7 @@ input{font-family:inherit;}
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, setDoc, writeBatch, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-const VERSION = "v4.8";
+const VERSION = "v4.9";
 const firebaseConfig = {
   apiKey: "AIzaSyAQzhhO8NbhvUkNOjnjvVJgNNN4vx8KRXU",
   authDomain: "team-order-1cfb0.firebaseapp.com",
@@ -1693,7 +1693,10 @@ function renderSettings(){
       <div style="padding:0 0 10px;display:flex;justify-content:center;flex-shrink:0;order:99"><div style="width:36px;height:4px;border-radius:2px;background:rgba(255,255,255,0.15);margin-top:8px"></div></div>
       <div style="padding:10px 15px 9px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;border-bottom:1px solid rgba(255,255,255,0.07)">
         <div>
-          <div style="font-size:16px;font-weight:900;color:#fff">⚙️ 설정</div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <div style="font-size:16px;font-weight:900;color:#fff">⚙️ 설정</div>
+            <div style="background:rgba(108,99,255,0.2);border:1px solid rgba(108,99,255,0.3);border-radius:20px;padding:2px 9px;font-size:11px;color:#9d97ff;font-weight:700">${VERSION}</div>
+          </div>
           ${S.myMemberId?(()=>{const mm=S.myTeam?.members?.find(m=>m.id===S.myMemberId);return mm?`<div style="font-size:11px;color:#9d97ff;margin-top:1px">👤 ${mm.name}님으로 등록됨 <button id="reset-my-name" style="background:none;border:none;color:#5050a0;font-size:10px;text-decoration:underline;cursor:pointer">변경</button></div>`:'';})():`<div style="font-size:11px;color:#5050a0;margin-top:1px">👤 이름 미등록 (이름 탭하면 등록)</div>`}
         </div>
         <div style="display:flex;align-items:center;gap:7px">
